@@ -1,0 +1,24 @@
+# Auto-destroy: every 30 minutes, run make down once the session expiry stored in SSM has passed.
+# Skipped until the cloud slice sets the repository variable REAPER_ENABLED=true.
+name: reaper
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  packages: read
+
+concurrency:
+  group: cloud-session
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    if: vars.REAPER_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "implemented in the cloud slice" && exit 1

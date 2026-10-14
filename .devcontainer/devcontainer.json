@@ -1,0 +1,13 @@
+{
+  "name": "booking-dev",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "overrideCommand": true,
+  "postCreateCommand": "uv sync --frozen",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff", "hashicorp.terraform"]
+    }
+  }
+}
