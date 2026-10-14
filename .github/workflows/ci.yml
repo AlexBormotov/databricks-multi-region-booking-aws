@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/alexbormotov/databricks-multi-region-booking-aws-dev
+
+jobs:
+  # The dev image is tagged by the hash of its Dockerfile, so it is rebuilt only when that changes.
+  image:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.tag.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: tag
+        run: echo "ref=$IMAGE:${{ hashFiles('.devcontainer/Dockerfile') }}" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push unless the tag exists
+        env:
+          REF: ${{ steps.tag.outputs.ref }}
+        run: |
+          if docker manifest inspect "$REF" > /dev/null 2>&1; then
+            echo "$REF exists"
+          else
+            docker build -t "$REF" .devcontainer
+            docker push "$REF"
+          fi
+
+  # Each check is the Make target a contributor runs; Make re-runs itself in the dev container.
+  check:
+    needs: image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lint, test, test-integration, security]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Use the pinned image as the compose image
+        env:
+          REF: ${{ needs.image.outputs.ref }}
+        run: docker pull -q "$REF" && docker tag "$REF" "$IMAGE:local"
+      - run: make ${{ matrix.target }}

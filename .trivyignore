@@ -1,0 +1,4 @@
+# DS-0002 (root user): .devcontainer/Dockerfile builds the dev and CI toolbox, never a deployed
+# workload; Lambda runs on the AWS-managed runtime. The toolbox writes to the bind-mounted repo and
+# reads the host's ~/.aws mounted at /root/.aws.
+DS-0002
