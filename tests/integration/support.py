@@ -31,3 +31,11 @@ def violations(pool):
 def scalar(pool, query, *params):
     with pool.connection() as conn:
         return conn.execute(query, params).fetchone()[0]
+
+
+# Emulators accept any credentials; the region is where the client points.
+FAKE_AWS = {
+    "region_name": "us-east-1",
+    "aws_access_key_id": "testing",
+    "aws_secret_access_key": "testing",
+}
