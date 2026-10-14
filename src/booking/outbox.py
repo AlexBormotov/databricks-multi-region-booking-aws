@@ -18,12 +18,16 @@ def insert_event(
     payload: dict,
     home_region: str,
     occurred_at: datetime,
+    event_id: uuid.UUID | None = None,
 ) -> None:
+    """Pass event_id only for an event that must be written at most once: a repeated insert of
+    the same id is ignored."""
     cur.execute(
         "INSERT INTO outbox (event_id, aggregate_id, aggregate_version, event_type, payload,"
-        " home_region, occurred_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        " home_region, occurred_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        " ON CONFLICT (event_id) DO NOTHING",
         (
-            uuid7(),
+            event_id or uuid7(),
             aggregate_id,
             aggregate_version,
             event_type,
