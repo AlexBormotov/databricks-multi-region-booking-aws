@@ -133,13 +133,22 @@ resource "aws_iam_role" "deploy" {
   max_session_duration = 7200
 }
 
-# PowerUserAccess covers every service the stack uses but not IAM. IAM is limited to the project's
-# own booking-* roles and policies, and the two bootstrap roles are off-limits. The real barrier is
-# the trust policy: only jobs in environment demo-prod (required reviewer) or demo-reaper (main
-# branch only) can assume this role.
+# PowerUserAccess covers every service the stack uses but not IAM. IAM writes are limited to
+# booking-* roles and policies, and every role the deploy role creates or changes must carry the
+# PowerUserAccess permissions boundary. A role it creates can therefore never hold more than
+# PowerUserAccess, even with AdministratorAccess attached. The two bootstrap roles are off-limits.
 resource "aws_iam_role_policy_attachment" "deploy_power_user" {
   role       = aws_iam_role.deploy.name
   policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
+}
+
+locals {
+  boundary_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
+  project_iam = [
+    "arn:aws:iam::${local.account_id}:role/booking-*",
+    "arn:aws:iam::${local.account_id}:policy/booking-*",
+    "arn:aws:iam::${local.account_id}:instance-profile/booking-*",
+  ]
 }
 
 resource "aws_iam_role_policy" "deploy_iam" {
@@ -148,21 +157,41 @@ resource "aws_iam_role_policy" "deploy_iam" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["iam:*Role", "iam:*RolePolicy", "iam:*RolePolicies", "iam:*Policy", "iam:*PolicyVersion*",
-        "iam:PassRole", "iam:TagRole", "iam:UntagRole", "iam:ListInstanceProfilesForRole", "iam:*InstanceProfile"]
-        Resource = [
-          "arn:aws:iam::${local.account_id}:role/booking-*",
-          "arn:aws:iam::${local.account_id}:policy/booking-*",
-          "arn:aws:iam::${local.account_id}:instance-profile/booking-*",
-        ]
+        Sid      = "GrantOnlyInsideTheBoundary"
+        Effect   = "Allow"
+        Action   = ["iam:CreateRole", "iam:PutRolePermissionsBoundary", "iam:AttachRolePolicy", "iam:PutRolePolicy"]
+        Resource = local.project_iam
+        Condition = {
+          StringEquals = { "iam:PermissionsBoundary" = local.boundary_arn }
+        }
       },
       {
+        Sid    = "ManageProjectRolesAndPolicies"
+        Effect = "Allow"
+        Action = [
+          "iam:DeleteRole", "iam:UpdateRole", "iam:UpdateRoleDescription", "iam:UpdateAssumeRolePolicy",
+          "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:TagRole", "iam:UntagRole", "iam:PassRole",
+          "iam:CreatePolicy", "iam:DeletePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
+          "iam:SetDefaultPolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
+          "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:AddRoleToInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile", "iam:TagInstanceProfile", "iam:UntagInstanceProfile",
+        ]
+        Resource = local.project_iam
+      },
+      {
+        Sid      = "ReadIam"
         Effect   = "Allow"
-        Action   = ["iam:CreateServiceLinkedRole", "iam:GetRole", "iam:ListRoles", "iam:ListPolicies"]
+        Action   = ["iam:Get*", "iam:List*"]
         Resource = "*"
       },
       {
+        Sid      = "KeepTheBoundary"
+        Effect   = "Deny"
+        Action   = "iam:DeleteRolePermissionsBoundary"
+        Resource = "*"
+      },
+      {
+        Sid      = "LeaveBootstrapRolesAlone"
         Effect   = "Deny"
         Action   = "iam:*"
         Resource = [aws_iam_role.plan.arn, "arn:aws:iam::${local.account_id}:role/booking-gha-deploy"]

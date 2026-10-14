@@ -7,7 +7,7 @@ Done once per AWS account, by its owner. It creates only resources that are free
 | S3 bucket `booking-tfstate-<account-id>` | Terraform state for `infra/live/demo-prod` (S3 native lockfile) |
 | GitHub OIDC provider | GitHub Actions authenticates without long-lived keys |
 | Role `booking-gha-plan` | `ReadOnlyAccess`; assumable from pull requests and `main` of this repository |
-| Role `booking-gha-deploy` | `PowerUserAccess` plus IAM limited to `booking-*`; assumable only from the `demo-prod` and `demo-reaper` environments |
+| Role `booking-gha-deploy` | `PowerUserAccess` plus IAM limited to `booking-*` roles, which must carry the `PowerUserAccess` permissions boundary; assumable only from the `demo-prod` and `demo-reaper` environments |
 | Budget `booking-monthly` | $12 per month; email at 50% and 100% actual, and at 100% forecast |
 
 Host prerequisites: Docker Desktop, GNU Make, AWS CLI v2, `gh` logged in. Run commands in Git Bash
