@@ -13,6 +13,12 @@ services:
       # Not AWS_ENDPOINT_URL: that would also send terraform and the aws CLI to moto.
       MOTO_ENDPOINT_URL: http://moto:5000
       DYNAMODB_ENDPOINT_URL: http://dynamodb:8000
+      # Passed through from the host when set: an SSO profile locally, OIDC credentials in CI.
+      AWS_PROFILE:
+      AWS_ACCESS_KEY_ID:
+      AWS_SECRET_ACCESS_KEY:
+      AWS_SESSION_TOKEN:
+      TF_VAR_budget_email:
     depends_on:
       postgres: {condition: service_healthy}
       moto: {condition: service_started}

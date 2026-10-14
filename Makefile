@@ -30,6 +30,9 @@ sync:
 lint: sync
 	ruff check .
 	ruff format --check .
+	terraform fmt -check -recursive infra
+	terragrunt hcl format --check --working-dir infra/live
+	tflint --recursive --chdir infra
 
 test: sync
 	pytest tests/unit
@@ -42,8 +45,10 @@ security: sync
 	trivy fs --no-progress --scanners vuln,misconfig,secret --exit-code 1 --severity HIGH,CRITICAL \
 		--skip-dirs ai-factory-kit --skip-dirs .venv .
 
+# Read-only: no state lock is taken, so the plan role needs no write access.
 plan:
-	@echo "plan: implemented in slice 0, step 4" && exit 1
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+		-- plan -lock=false -input=false
 
 up demo down cost-report:
 	@echo "$@: implemented in the cloud slice" && exit 1

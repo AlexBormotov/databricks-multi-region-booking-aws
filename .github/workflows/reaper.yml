@@ -20,5 +20,6 @@ jobs:
   reap:
     if: vars.REAPER_ENABLED == 'true'
     runs-on: ubuntu-24.04
+    environment: demo-reaper # no reviewer, main branch only; may assume the deploy role
     steps:
       - run: echo "implemented in the cloud slice" && exit 1

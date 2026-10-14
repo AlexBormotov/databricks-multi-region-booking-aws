@@ -61,3 +61,39 @@ jobs:
           REF: ${{ needs.image.outputs.ref }}
         run: docker pull -q "$REF" && docker tag "$REF" "$IMAGE:local"
       - run: make ${{ matrix.target }}
+
+  # Skipped until the bootstrap sets the repository variable AWS_PLAN_ROLE_ARN (docs/bootstrap.md).
+  plan:
+    needs: image
+    if: github.event_name == 'pull_request' && vars.AWS_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Use the pinned image as the compose image
+        env:
+          REF: ${{ needs.image.outputs.ref }}
+        run: docker pull -q "$REF" && docker tag "$REF" "$IMAGE:local"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: make plan 2>&1 | tee plan.txt
+      - name: Post the plan as a PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "### \`make plan\` (${{ job.status }})"
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' plan.txt | tail -c 60000
+            echo '```'
+          } > comment.md
+          gh pr comment "$PR" --body-file comment.md --edit-last --create-if-none

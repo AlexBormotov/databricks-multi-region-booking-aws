@@ -2,3 +2,7 @@
 # workload; Lambda runs on the AWS-managed runtime. The toolbox writes to the bind-mounted repo and
 # reads the host's ~/.aws mounted at /root/.aws.
 DS-0002
+
+# AWS-0132 (S3 without a customer-managed KMS key): the state bucket uses SSE-S3. A CMK costs
+# $1/month, and only idle-free resources persist between sessions.
+AWS-0132
