@@ -1,32 +1,10 @@
-import json
-import os
-import uuid
 from datetime import date
 
-import boto3
-import pytest
-from support import FAKE_AWS, HOLD, T0, scalar, stay
+from support import HOLD, T0, read_all, scalar, stay
 
 from booking.outbox import publish_once, run_poller
 from booking.service import book
 from booking.telemetry import record_rejection
-
-
-@pytest.fixture
-def kinesis():
-    client = boto3.client("kinesis", endpoint_url=os.environ["MOTO_ENDPOINT_URL"], **FAKE_AWS)
-    name = f"events-{uuid.uuid4().hex[:8]}"
-    client.create_stream(StreamName=name, ShardCount=1)
-    client.get_waiter("stream_exists").wait(StreamName=name)
-    return client, name
-
-
-def read_all(client, stream):
-    shard = client.list_shards(StreamName=stream)["Shards"][0]["ShardId"]
-    iterator = client.get_shard_iterator(
-        StreamName=stream, ShardId=shard, ShardIteratorType="TRIM_HORIZON"
-    )["ShardIterator"]
-    return [json.loads(r["Data"]) for r in client.get_records(ShardIterator=iterator)["Records"]]
 
 
 def book_in(pool, room, region, check_in):

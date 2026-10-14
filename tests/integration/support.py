@@ -1,8 +1,12 @@
 """Helpers shared by the integration tests."""
 
+import json
+import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+
+import boto3
 
 from booking.service import BookingRequest, book
 
@@ -39,3 +43,20 @@ FAKE_AWS = {
     "aws_access_key_id": "testing",
     "aws_secret_access_key": "testing",
 }
+
+
+def dynamodb(region):
+    # DynamoDB Local keeps a separate database per region, like the real service.
+    return boto3.client(
+        "dynamodb",
+        endpoint_url=os.environ["DYNAMODB_ENDPOINT_URL"],
+        **{**FAKE_AWS, "region_name": region},
+    )
+
+
+def read_all(client, stream):
+    shard = client.list_shards(StreamName=stream)["Shards"][0]["ShardId"]
+    iterator = client.get_shard_iterator(
+        StreamName=stream, ShardId=shard, ShardIteratorType="TRIM_HORIZON"
+    )["ShardIterator"]
+    return [json.loads(r["Data"]) for r in client.get_records(ShardIterator=iterator)["Records"]]

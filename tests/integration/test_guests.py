@@ -1,35 +1,10 @@
 import json
-import os
 import uuid
 
-import boto3
-import pytest
-from support import FAKE_AWS, HOLD, T0
+from support import HOLD, T0, dynamodb
 
 from booking.guests import VAULTS, Guest, register
 from booking.service import BookingRequest, book
-
-
-def dynamodb(region):
-    # DynamoDB Local keeps a separate database per region, like the real service.
-    return boto3.client(
-        "dynamodb",
-        endpoint_url=os.environ["DYNAMODB_ENDPOINT_URL"],
-        **{**FAKE_AWS, "region_name": region},
-    )
-
-
-@pytest.fixture(scope="module")
-def vaults():
-    for region, table in VAULTS.values():
-        client = dynamodb(region)
-        if table not in client.list_tables()["TableNames"]:
-            client.create_table(
-                TableName=table,
-                KeySchema=[{"AttributeName": "guest_id", "KeyType": "HASH"}],
-                AttributeDefinitions=[{"AttributeName": "guest_id", "AttributeType": "S"}],
-                BillingMode="PAY_PER_REQUEST",
-            )
 
 
 def stored_in(guest_id):

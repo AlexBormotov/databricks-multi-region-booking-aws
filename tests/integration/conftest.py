@@ -1,12 +1,15 @@
 import os
 import uuid
 
+import boto3
 import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from support import FAKE_AWS, dynamodb
 
 from booking.db import create_pool, migrate
+from booking.guests import VAULTS
 
 
 @pytest.fixture
@@ -44,3 +47,25 @@ def room(pool):
         )
         conn.execute("INSERT INTO rooms VALUES (%s, %s, 'double', 12000)", (room_id, hotel_id))
     return hotel_id, room_id
+
+
+@pytest.fixture(scope="module")
+def vaults():
+    for region, table in VAULTS.values():
+        client = dynamodb(region)
+        if table not in client.list_tables()["TableNames"]:
+            client.create_table(
+                TableName=table,
+                KeySchema=[{"AttributeName": "guest_id", "KeyType": "HASH"}],
+                AttributeDefinitions=[{"AttributeName": "guest_id", "AttributeType": "S"}],
+                BillingMode="PAY_PER_REQUEST",
+            )
+
+
+@pytest.fixture
+def kinesis():
+    client = boto3.client("kinesis", endpoint_url=os.environ["MOTO_ENDPOINT_URL"], **FAKE_AWS)
+    name = f"events-{uuid.uuid4().hex[:8]}"
+    client.create_stream(StreamName=name, ShardCount=1)
+    client.get_waiter("stream_exists").wait(StreamName=name)
+    return client, name
