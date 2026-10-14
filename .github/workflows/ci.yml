@@ -90,10 +90,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
+          sed 's/\x1b\[[0-9;]*m//g' plan.txt > plain.txt
           {
             echo "### \`make plan\` (${{ job.status }})"
             echo '```'
-            sed 's/\x1b\[[0-9;]*m//g' plan.txt | tail -c 60000
+            grep -E 'Plan: |No changes\.|Error' plain.txt | sed 's/^.*STDOUT //' || true
             echo '```'
+            echo '<details><summary>Full plan (last 55 KB)</summary>'
+            echo
+            echo '```'
+            tail -c 55000 plain.txt
+            echo '```'
+            echo '</details>'
           } > comment.md
           gh pr comment "$PR" --body-file comment.md --edit-last --create-if-none
