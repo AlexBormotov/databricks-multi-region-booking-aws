@@ -1,0 +1,13 @@
+ai-factory-kit/
+GRILL.md
+
+__pycache__/
+.venv/
+.env
+.terraform/
+.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+.claude/settings.local.json
+.codex/
+.vscode/

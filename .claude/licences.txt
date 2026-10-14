@@ -1,0 +1,68 @@
+Third-party notices
+
+This file holds the copyright and licence notices for material in this kit that comes from other
+works, so the Markdown files carry attribution only. Each entry names what it covers and where the
+material came from.
+
+
+1. mattpocock/skills
+
+Covers: skills/grilling/SKILL.md (body), skills/diagnosing-bugs/SKILL.md (body, adapted),
+skills/domain-modeling/SKILL.md, skills/domain-modeling/GLOSSARY-FORMAT.md,
+skills/domain-modeling/ADR-FORMAT.md (adapted), and the rules credited to this source in
+05-intent-layer.md and 07-human-boundary.md.
+Source: https://github.com/mattpocock/skills, commit 49dd158 on main, read 2026-10-10.
+
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+2. Ponytail
+
+Covers: the ordered ladder and the carve-out in skills/simplicity-ladder/SKILL.md, restated in this
+kit's own words.
+Source: https://github.com/DietrichGebert/ponytail, MIT License, Copyright (c) 2026 DietrichGebert.
+
+
+3. SKILL.state: Scalable Long-Horizon Agent Skills
+
+Covers: the figures cited in skills/execution-state/SKILL.md.
+Source: Sanket Badhe, Priyanka Tiwari, Jonghyun Chung, arXiv:2608.26263, licensed under Creative
+Commons Attribution 4.0 International, https://creativecommons.org/licenses/by/4.0/
+
+
+4. ASD-STE100 Simplified Technical English, Issue 9
+
+Covers: the limits restated in skills/earned-length/SKILL.md section 5, cited by rule number.
+Source: ASD (asd-ste100.org). Reproduction in whole or in part requires ASD's written authority, so
+no rule or dictionary entry is reproduced here.
+
+
+5. karpathy/autoresearch
+
+Covers: the protocol described in 08-measured-loop.md and skills/autoresearch/SKILL.md.
+Source: https://github.com/karpathy/autoresearch. The repository carries no licence, so no code from
+it is included in this kit.
+
+
+Sources whose ideas are restated without a licence condition to carry are attributed in the Markdown
+files where they are used and are not repeated here.
