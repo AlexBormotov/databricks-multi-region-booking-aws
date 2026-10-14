@@ -6,10 +6,12 @@ locals {
   region = data.aws_region.this.region
   # The payment must finish before the hold expires; the margin covers Lambda start-up.
   payment_timeout_s = var.hold_ttl_s - 60
+  dsql_connect      = [{ Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }]
+  # Each function gets its own role; the simulated payment touches no database.
   functions = {
-    pay     = { handler = "booking.handlers.saga.pay", timeout = local.payment_timeout_s }
-    confirm = { handler = "booking.handlers.saga.confirm", timeout = 30 }
-    expire  = { handler = "booking.handlers.saga.expire", timeout = 30 }
+    pay     = { handler = "booking.handlers.saga.pay", timeout = local.payment_timeout_s, statements = [] }
+    confirm = { handler = "booking.handlers.saga.confirm", timeout = 30, statements = local.dsql_connect }
+    expire  = { handler = "booking.handlers.saga.expire", timeout = 30, statements = local.dsql_connect }
   }
 }
 
@@ -24,22 +26,22 @@ data "aws_iam_policy_document" "lambda_trust" {
 }
 
 resource "aws_iam_role" "lambda" {
-  name                 = "booking-saga-lambda-${local.region}"
+  for_each             = local.functions
+  name                 = "booking-saga-${each.key}-${local.region}"
   assume_role_policy   = data.aws_iam_policy_document.lambda_trust.json
   permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  role       = aws_iam_role.lambda.name
+  for_each   = local.functions
+  role       = aws_iam_role.lambda[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_role_policy" "lambda_dsql" {
-  role = aws_iam_role.lambda.name
-  policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }]
-  })
+resource "aws_iam_role_policy" "lambda" {
+  for_each = { for name, fn in local.functions : name => fn if length(fn.statements) > 0 }
+  role     = aws_iam_role.lambda[each.key].name
+  policy   = jsonencode({ Version = "2012-10-17", Statement = each.value.statements })
 }
 
 resource "aws_cloudwatch_log_group" "fn" {
@@ -51,7 +53,7 @@ resource "aws_cloudwatch_log_group" "fn" {
 resource "aws_lambda_function" "fn" {
   for_each         = local.functions
   function_name    = "booking-saga-${each.key}"
-  role             = aws_iam_role.lambda.arn
+  role             = aws_iam_role.lambda[each.key].arn
   runtime          = "python3.13"
   architectures    = ["x86_64"]
   handler          = each.value.handler

@@ -10,9 +10,25 @@ locals {
     STATE_MACHINE_ARN = var.state_machine_arn
     HOLD_TTL_S        = tostring(var.hold_ttl_s)
   }
+  dsql_connect = { Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }
+  put_events   = { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn }
+  # Each function gets its own role with only what it calls.
   functions = {
-    api    = { handler = "booking.handlers.api.handler", timeout = 15 }
-    poller = { handler = "booking.handlers.poller.handler", timeout = 60 }
+    api = {
+      handler = "booking.handlers.api.handler"
+      timeout = 15
+      statements = [
+        local.dsql_connect,
+        local.put_events, # rejected-attempt telemetry
+        { Effect = "Allow", Action = "dynamodb:PutItem", Resource = var.guest_vault_arns },
+        { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
+      ]
+    }
+    poller = {
+      handler    = "booking.handlers.poller.handler"
+      timeout    = 60
+      statements = [local.dsql_connect, local.put_events]
+    }
   }
   routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel"]
 }
@@ -28,27 +44,22 @@ data "aws_iam_policy_document" "lambda_trust" {
 }
 
 resource "aws_iam_role" "lambda" {
-  name                 = "booking-api-lambda-${local.region}"
+  for_each             = local.functions
+  name                 = "booking-${each.key}-lambda-${local.region}"
   assume_role_policy   = data.aws_iam_policy_document.lambda_trust.json
   permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  role       = aws_iam_role.lambda.name
+  for_each   = local.functions
+  role       = aws_iam_role.lambda[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy" "lambda" {
-  role = aws_iam_role.lambda.name
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      { Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn },
-      { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn },
-      { Effect = "Allow", Action = "dynamodb:PutItem", Resource = var.guest_vault_arns },
-      { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
-    ]
-  })
+  for_each = local.functions
+  role     = aws_iam_role.lambda[each.key].name
+  policy   = jsonencode({ Version = "2012-10-17", Statement = each.value.statements })
 }
 
 resource "aws_cloudwatch_log_group" "fn" {
@@ -60,7 +71,7 @@ resource "aws_cloudwatch_log_group" "fn" {
 resource "aws_lambda_function" "fn" {
   for_each         = local.functions
   function_name    = "booking-${each.key}"
-  role             = aws_iam_role.lambda.arn
+  role             = aws_iam_role.lambda[each.key].arn
   runtime          = "python3.13"
   architectures    = ["x86_64"]
   handler          = each.value.handler
