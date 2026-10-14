@@ -18,9 +18,12 @@ provider "aws" {
   }
 }
 
-variable "github_repo" {
+# GitHub issues immutable OIDC subjects for this repository: owner and repository carry their
+# numeric IDs, so a renamed or re-created repository cannot match. Read it from
+# `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` (sub_claim_prefix).
+variable "github_sub_prefix" {
   type    = string
-  default = "AlexBormotov/databricks-multi-region-booking-aws"
+  default = "repo:AlexBormotov@34210139/databricks-multi-region-booking-aws@1418538570"
 }
 
 variable "budget_email" {
@@ -79,9 +82,9 @@ resource "aws_iam_openid_connect_provider" "github" {
 data "aws_iam_policy_document" "trust" {
   for_each = {
     # Pull requests and main may plan; fork PRs never receive an OIDC token.
-    plan = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
+    plan = ["${var.github_sub_prefix}:pull_request", "${var.github_sub_prefix}:ref:refs/heads/main"]
     # Only jobs bound to these environments may deploy; demo-prod has a required reviewer.
-    deploy = ["repo:${var.github_repo}:environment:demo-prod", "repo:${var.github_repo}:environment:demo-reaper"]
+    deploy = ["${var.github_sub_prefix}:environment:demo-prod", "${var.github_sub_prefix}:environment:demo-reaper"]
   }
 
   statement {
