@@ -35,7 +35,7 @@ lint: sync
 	tflint --recursive --chdir infra
 
 test: sync
-	pytest tests/unit
+	pytest tests/unit tests/lakehouse
 
 test-integration: sync
 	pytest tests/integration

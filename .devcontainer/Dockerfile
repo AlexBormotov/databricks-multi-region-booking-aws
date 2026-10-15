@@ -12,6 +12,7 @@ ARG AWSCLI_VERSION=2.38.0
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git make unzip \
+    openjdk-21-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp/tools
