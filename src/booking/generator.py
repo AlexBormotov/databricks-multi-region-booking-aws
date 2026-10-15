@@ -99,7 +99,14 @@ def reference(seed: int, scale: Scale) -> dict[str, list[dict]]:
     for currency, rate in FX_START.items():
         for d in range(scale.days + 60):
             day = START.date() + timedelta(days=d)
-            fx.append({"currency": currency, "date": day.isoformat(), "rate_to_usd": 1 / rate})
+            fx.append(
+                {
+                    "currency": currency,
+                    "date": day.isoformat(),
+                    "rate_to_usd": 1 / rate,
+                    "exponent": 0 if currency == "JPY" else 2,
+                }
+            )
             if currency != "USD":
                 rate *= 1 + rng.gauss(0, 0.004)
     return {"hotels": hotels, "rooms": rooms, "fx_rates": fx}
@@ -210,19 +217,22 @@ def history(seed: int, scale: Scale, ref: dict[str, list[dict]]) -> list[bytes]:
 
 
 def write(out: Path, seed: int, scale_name: str) -> None:
-    """The landing layout: `events/region=<r>/backfill/` and `reference/`, gzip JSON lines."""
+    """The landing layout: `events/region=<r>/backfill/` and `reference/`, gzip JSON lines.
+
+    The gzip header carries no timestamp, so a seed always produces the same bytes.
+    """
     scale = SCALES[scale_name]
     ref = reference(seed, scale)
     for name, rows in ref.items():
         path = out / "reference" / f"{name}.json.gz"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with gzip.open(path, "wt") as f:
-            f.writelines(json.dumps(row) + "\n" for row in rows)
+        with gzip.GzipFile(path, "wb", mtime=0) as f:
+            f.writelines(json.dumps(row).encode() + b"\n" for row in rows)
     by_region: dict[str, list[bytes]] = {r: [] for r in REGIONS}
     for data in history(seed, scale, ref):
         by_region[json.loads(data)["home_region"]].append(data)
     for region, lines in by_region.items():
         path = out / "events" / f"region={region}" / "backfill" / "part-0000.json.gz"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with gzip.open(path, "wb") as f:
+        with gzip.GzipFile(path, "wb", mtime=0) as f:
             f.writelines(line + b"\n" for line in lines)
