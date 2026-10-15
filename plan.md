@@ -88,7 +88,8 @@ under the same names.
 | of concurrent claims on one room-night in DynamoDB, exactly one wins; a multi-night claim that fails part-way releases the nights it took | `test_spike_single_winner`, `test_spike_compensation` against DynamoDB Local |
 
 **Negative controls**, run once each, with their output in the PR description:
-- Remove the dedup step: `test_dedup_collapses_duplicates` and `test_gold_kpis` fail.
+- Remove the dedup step: `test_dedup_collapses_duplicates` and `test_demand_marts` (a rejected
+  attempt delivered twice) fail. The KPIs do not depend on dedup: the CDC state collapses repeats.
 - Plant a double booking in the fixture: `test_gold_invariant` reports it.
 - Drop the condition from the spike's `PutItem`: `test_spike_single_winner` fails.
 
