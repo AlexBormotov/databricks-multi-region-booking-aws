@@ -75,9 +75,11 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "moto", extra = ["server"] },
     { name = "pyspark" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -90,9 +92,11 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.25" },
     { name = "moto", extras = ["server"], specifier = ">=5.2.4" },
     { name = "pyspark", specifier = "==4.1.*" },
     { name = "pytest", specifier = ">=9.1" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ruff", specifier = ">=0.17" },
 ]
 

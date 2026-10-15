@@ -18,6 +18,13 @@ PAYLOAD_SCHEMA = (
     " status_code INT"
 )
 PAYLOAD_FIELDS = [f.strip().split(" ")[0] for f in PAYLOAD_SCHEMA.split(",")]
+# Reference files, as `booking.generator` writes them.
+HOTEL_SCHEMA = (
+    "hotel_id STRING, name STRING, city STRING, country STRING, tz STRING, currency STRING,"
+    " lat DOUBLE, lon DOUBLE"
+)
+ROOM_SCHEMA = "room_id STRING, hotel_id STRING, room_type STRING, base_rate_minor BIGINT"
+FX_SCHEMA = "currency STRING, date STRING, rate_to_usd DOUBLE, exponent INT"
 
 
 def parse(bronze: DataFrame) -> DataFrame:

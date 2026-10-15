@@ -1,0 +1,494 @@
+{
+  "datasets": [
+    {
+      "name": "daily",
+      "displayName": "Hotel KPIs by night",
+      "queryLines": [
+        "SELECT date, sum(sold_room_nights) / sum(available_room_nights) AS occupancy, sum(room_revenue_usd) / nullif(sum(sold_room_nights), 0) AS adr_usd, sum(room_revenue_usd) / sum(available_room_nights) AS revpar_usd FROM booking.gold.kpi_hotel_daily GROUP BY date"
+      ]
+    },
+    {
+      "name": "pace",
+      "displayName": "Booking pace",
+      "queryLines": [
+        "SELECT days_before, sum(cumulative_bookings) AS cumulative_bookings FROM booking.gold.booking_pace GROUP BY days_before"
+      ]
+    },
+    {
+      "name": "lead",
+      "displayName": "Lead time",
+      "queryLines": [
+        "SELECT lead_time_days, sum(bookings) AS bookings FROM booking.gold.lead_time GROUP BY lead_time_days"
+      ]
+    },
+    {
+      "name": "cancel",
+      "displayName": "Cancellations",
+      "queryLines": [
+        "SELECT check_in_month, sum(cancelled) / sum(paid) AS cancellation_rate FROM booking.gold.cancellation_rate GROUP BY check_in_month"
+      ]
+    },
+    {
+      "name": "regions",
+      "displayName": "Contention by region",
+      "queryLines": [
+        "SELECT home_region, attempts - rejected AS won, rejected, conflict_rate FROM booking.gold.conflict_rate_by_region"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "revenue",
+      "displayName": "Occupancy and revenue",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "occupancy",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "daily",
+                  "fields": [
+                    {
+                      "name": "date",
+                      "expression": "`date`"
+                    },
+                    {
+                      "name": "occupancy",
+                      "expression": "`occupancy`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "date"
+                },
+                "y": {
+                  "fieldName": "occupancy",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "occupancy"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Occupancy"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "adr",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "daily",
+                  "fields": [
+                    {
+                      "name": "date",
+                      "expression": "`date`"
+                    },
+                    {
+                      "name": "adr_usd",
+                      "expression": "`adr_usd`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "date"
+                },
+                "y": {
+                  "fieldName": "adr_usd",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "adr_usd"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "ADR, USD"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "revpar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "daily",
+                  "fields": [
+                    {
+                      "name": "date",
+                      "expression": "`date`"
+                    },
+                    {
+                      "name": "revpar_usd",
+                      "expression": "`revpar_usd`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "date"
+                },
+                "y": {
+                  "fieldName": "revpar_usd",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "revpar_usd"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "RevPAR, USD"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 6,
+            "width": 3,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "demand",
+      "displayName": "Demand",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "pace",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "pace",
+                  "fields": [
+                    {
+                      "name": "days_before",
+                      "expression": "`days_before`"
+                    },
+                    {
+                      "name": "cumulative_bookings",
+                      "expression": "`cumulative_bookings`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "days_before",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "days_before"
+                },
+                "y": {
+                  "fieldName": "cumulative_bookings",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "cumulative_bookings"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Booking pace by days before arrival"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "lead_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "lead",
+                  "fields": [
+                    {
+                      "name": "lead_time_days",
+                      "expression": "`lead_time_days`"
+                    },
+                    {
+                      "name": "bookings",
+                      "expression": "`bookings`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "lead_time_days",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "lead_time_days"
+                },
+                "y": {
+                  "fieldName": "bookings",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "bookings"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Lead time, days"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cancellations",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cancel",
+                  "fields": [
+                    {
+                      "name": "check_in_month",
+                      "expression": "`check_in_month`"
+                    },
+                    {
+                      "name": "cancellation_rate",
+                      "expression": "`cancellation_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "check_in_month",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "check_in_month"
+                },
+                "y": {
+                  "fieldName": "cancellation_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "cancellation_rate"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Cancellation rate by check-in month"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 6,
+            "width": 3,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "contention",
+      "displayName": "Regional contention",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "won",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "regions",
+                  "fields": [
+                    {
+                      "name": "home_region",
+                      "expression": "`home_region`"
+                    },
+                    {
+                      "name": "won",
+                      "expression": "`won`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "home_region",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "home_region"
+                },
+                "y": {
+                  "fieldName": "won",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "won"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Bookings won per region"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "conflict_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "regions",
+                  "fields": [
+                    {
+                      "name": "home_region",
+                      "expression": "`home_region`"
+                    },
+                    {
+                      "name": "conflict_rate",
+                      "expression": "`conflict_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "home_region",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "home_region"
+                },
+                "y": {
+                  "fieldName": "conflict_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "conflict_rate"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Conflict rate per region"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}
