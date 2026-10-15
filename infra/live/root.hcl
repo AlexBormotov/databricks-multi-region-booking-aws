@@ -34,3 +34,10 @@ generate "provider" {
     }
   EOF
 }
+
+inputs = {
+  # Every role the stack creates carries this boundary; the deploy role cannot create one without
+  # it (infra/bootstrap).
+  permissions_boundary = "arn:aws:iam::aws:policy/PowerUserAccess"
+  package_path         = "${get_repo_root()}/build/lambda.zip"
+}

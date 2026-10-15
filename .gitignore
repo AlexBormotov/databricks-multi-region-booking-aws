@@ -3,6 +3,8 @@ GRILL.md
 
 __pycache__/
 .venv/
+build/
+artifacts/
 .env
 .terraform/
 .terragrunt-cache/

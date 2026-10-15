@@ -1,0 +1,83 @@
+{
+  "Comment": "Hold saga: the payment races the hold TTL (TimeoutSeconds); every path ends in an update guarded by the booking's state.",
+  "StartAt": "Pay",
+  "States": {
+    "Pay": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${pay_function_arn}",
+        "Payload": {
+          "booking_id.$": "$.booking_id"
+        }
+      },
+      "TimeoutSeconds": ${payment_timeout_s},
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "Expire"
+        }
+      ],
+      "Next": "Confirm"
+    },
+    "Confirm": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${confirm_function_arn}",
+        "Payload": {
+          "booking_id.$": "$.booking_id"
+        }
+      },
+      "ResultSelector": {
+        "status_code.$": "$.Payload.status_code",
+        "booking.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 5,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "End": true
+    },
+    "Expire": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${expire_function_arn}",
+        "Payload": {
+          "booking_id.$": "$.booking_id"
+        }
+      },
+      "ResultSelector": {
+        "status_code.$": "$.Payload.status_code",
+        "booking.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 5,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "End": true
+    }
+  }
+}

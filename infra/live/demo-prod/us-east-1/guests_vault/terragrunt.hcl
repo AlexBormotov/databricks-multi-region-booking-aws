@@ -5,3 +5,7 @@ include "root" {
 terraform {
   source = "${get_repo_root()}/infra/modules//guests_vault"
 }
+
+inputs = {
+  table_name = "guests-us"
+}
