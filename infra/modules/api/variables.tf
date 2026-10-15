@@ -31,6 +31,15 @@ variable "guest_vault_arns" {
   type = list(string)
 }
 
+variable "knowledge_base_id" {
+  type        = string
+  description = "Search knowledge base in us-east-1; both regions call it."
+}
+
+variable "knowledge_base_arn" {
+  type = string
+}
+
 variable "hold_ttl_s" {
   type    = number
   default = 900
