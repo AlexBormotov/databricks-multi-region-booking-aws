@@ -12,26 +12,17 @@ from booking.service import Clock, availability, utc_now
 # The knowledge base lives in us-east-1 only; the us-east-2 functions call it cross-region.
 KB_REGION = "us-east-1"
 TOP_K = 10
-# A hotel's document can split into several chunks; ask for more chunks than hotels.
-CHUNKS_PER_HOTEL = 3
 
 
 def retrieve(client, kb_id: str, q: str, k: int = TOP_K) -> list[dict]:
-    """The top `k` distinct hotels for `q`, best first, as their metadata attributes."""
+    """The top `k` hotels for `q`, best first. The data source does not chunk documents
+    (infra/modules/search), so each result is one hotel."""
     results = client.retrieve(
         knowledgeBaseId=kb_id,
         retrievalQuery={"text": q},
-        retrievalConfiguration={
-            "vectorSearchConfiguration": {"numberOfResults": k * CHUNKS_PER_HOTEL}
-        },
+        retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": k}},
     )["retrievalResults"]
-    hotels: dict[str, dict] = {}
-    for result in results:
-        metadata = result.get("metadata", {})
-        hotel_id = metadata.get("hotel_id")
-        if hotel_id and hotel_id not in hotels:
-            hotels[hotel_id] = {"hotel_id": hotel_id, "city": metadata.get("city")}
-    return list(hotels.values())[:k]
+    return [{"hotel_id": r["metadata"]["hotel_id"], "city": r["metadata"]["city"]} for r in results]
 
 
 def search(

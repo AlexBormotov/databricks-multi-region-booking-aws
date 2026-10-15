@@ -47,9 +47,7 @@ def stubbed(*hotel_ids, q="quiet hotel with a pool"):
             "knowledgeBaseId": KB_ID,
             "retrievalQuery": {"text": q},
             "retrievalConfiguration": {
-                "vectorSearchConfiguration": {
-                    "numberOfResults": search.TOP_K * search.CHUNKS_PER_HOTEL
-                }
+                "vectorSearchConfiguration": {"numberOfResults": search.TOP_K}
             },
         },
     )
@@ -70,17 +68,17 @@ def hotels(pool, room):
 def test_search_filters_unavailable(pool, hotels):
     booked, free = hotels
     unknown = uuid.uuid4()  # in the corpus, not in DSQL
-    client, stubber = stubbed(booked, free, free, unknown)
+    client, stubber = stubbed(booked, free, unknown)
     found = search.search(pool, client, KB_ID, "quiet hotel with a pool", CHECK_IN, CHECK_OUT)
     stubber.assert_no_pending_responses()
     assert found == [{"hotel_id": str(free), "city": "New York", "free_rooms": 1}]
 
 
-def test_search_keeps_the_rank_and_the_top_k(pool):
-    ids = [add_hotel(pool, "Chicago") for _ in range(search.TOP_K + 2)]
+def test_search_keeps_the_rank(pool):
+    ids = [add_hotel(pool, "Chicago") for _ in range(3)]
     client, _ = stubbed(*reversed(ids))
     found = search.search(pool, client, KB_ID, "quiet hotel with a pool", CHECK_IN, CHECK_OUT)
-    assert [h["hotel_id"] for h in found] == [str(h) for h in reversed(ids)][: search.TOP_K]
+    assert [h["hotel_id"] for h in found] == [str(h) for h in reversed(ids)]
 
 
 def test_search_route(monkeypatch, pool, hotels):
