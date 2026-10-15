@@ -1,7 +1,8 @@
 # Spec
 
 Status: approved by the owner on 2026-10-14. Implements `intent.md`. Amended on 2026-10-14 by
-decisions D1-D3 of `plan.md`.
+decisions D1-D3 of `plan.md`, and on 2026-10-15 by the slice 1 review (API `400`/`404`,
+`PaymentRefunded` event id).
 
 Every slice ends with a checkable completion condition. "Local" means `make` targets inside the dev
 container, at $0. "Cloud" means the single recorded `cloud-session` run. A claim marked
@@ -102,6 +103,8 @@ best-effort. It is telemetry, not state: losing it breaks no invariant.
 | `POST /bookings/{id}/cancel` | `200`; legal only from `pending` or `confirmed` |
 | `GET /search?q&check_in&check_out` | hotels matching `q`, filtered to those with a free room |
 
+Every route answers `400` to malformed input and `404` to an unknown hotel, room or booking.
+
 ### 2.6 PII residency
 
 `POST /guests` stores name, email and phone in a single-region DynamoDB table: `guests-us` in
@@ -115,6 +118,9 @@ Every event, from the outbox or from telemetry, is one JSON object:
 
 `event_id` (uuidv7), `event_type`, `aggregate_id`, `aggregate_version` (null for telemetry),
 `home_region`, `occurred_at` (UTC, ISO-8601), `schema_version`, `payload`.
+
+One exception to uuidv7: `PaymentRefunded` takes a uuidv5 derived from the booking id, so a
+retried saga step writes the refund event once.
 
 Types: `BookingHeld`, `BookingConfirmed`, `BookingExpired`, `BookingCancelled`, `PaymentRefunded`,
 `BookingAttemptRejected`. Amounts are minor units plus currency; nights are hotel-local dates. The
