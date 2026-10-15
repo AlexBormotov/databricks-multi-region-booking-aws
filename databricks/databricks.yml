@@ -1,0 +1,87 @@
+# The lakehouse as one bundle: the pipeline, the booking-refresh job and the dashboard.
+# Deployed by `make up` with the landing bucket and warehouse created in the same session.
+bundle:
+  name: booking
+
+variables:
+  landing_path:
+    description: The landing bucket, registered as a Unity Catalog external location.
+  warehouse_id:
+    description: The SQL warehouse for the checks and the dashboard.
+
+# The pipeline imports the tested transformations from src/lakehouse.
+sync:
+  paths:
+    - .
+    - ../src/lakehouse
+
+targets:
+  demo-prod:
+    default: true
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+
+resources:
+  pipelines:
+    lakehouse:
+      name: booking
+      serverless: true
+      catalog: booking
+      schema: silver
+      channel: CURRENT
+      continuous: false
+      # Added to sys.path, so `import lakehouse` resolves to the synced package.
+      root_path: ../src
+      configuration:
+        booking.landing: ${var.landing_path}
+      libraries:
+        - glob:
+            include: pipeline/**
+
+  jobs:
+    booking_refresh:
+      name: booking-refresh
+      trigger:
+        pause_status: UNPAUSED
+        file_arrival:
+          url: ${var.landing_path}/events/
+          min_time_between_triggers_seconds: 300
+      tasks:
+        - task_key: pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.lakehouse.id}
+        - task_key: gold_invariant
+          depends_on: [{task_key: pipeline}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ./checks/gold_invariant.sql}
+        - task_key: row_counts
+          depends_on: [{task_key: pipeline}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ./checks/row_counts.sql}
+        - task_key: cdc_oracle
+          depends_on: [{task_key: pipeline}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ./checks/cdc_latest.sql}
+        - task_key: cdc_matches
+          depends_on: [{task_key: cdc_oracle}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ./checks/cdc_matches.sql}
+        - task_key: dashboard
+          depends_on:
+            - {task_key: gold_invariant}
+            - {task_key: row_counts}
+            - {task_key: cdc_matches}
+          dashboard_task:
+            dashboard_id: ${resources.dashboards.booking_dashboard.id}
+            warehouse_id: ${var.warehouse_id}
+
+  dashboards:
+    booking_dashboard:
+      display_name: Booking
+      file_path: ./dashboards/booking.lvdash.json
+      warehouse_id: ${var.warehouse_id}

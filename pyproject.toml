@@ -11,8 +11,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.25",
     "moto[server]>=5.2.4",
+    "pyspark==4.1.*",
     "pytest>=9.1",
+    "pyyaml>=6.0.2",
     "ruff>=0.17",
 ]
 
@@ -28,6 +31,11 @@ line-length = 100
 target-version = "py313"
 # Vendored from the AI-factory kit; kept as shipped.
 extend-exclude = [".agents", ".claude", "ai-factory-kit"]
+
+[tool.ruff.per-file-target-version]
+# Serverless pipelines run Python 3.12.
+"src/lakehouse/**" = "py312"
+"databricks/**" = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
