@@ -2,7 +2,7 @@
 
 Status: approved by the owner on 2026-10-14. Implements `intent.md`. Amended on 2026-10-14 by
 decisions D1-D3 of `plan.md`, and on 2026-10-15 by the slice 1 review (API `400`/`404`,
-`PaymentRefunded` event id).
+`PaymentRefunded` event id), and on 2026-10-15 by decisions D6-D8 of `plan.md`.
 
 Every slice ends with a checkable completion condition. "Local" means `make` targets inside the dev
 container, at $0. "Cloud" means the single recorded `cloud-session` run. A claim marked
@@ -167,8 +167,8 @@ Metric definitions (sold means `confirmed`; revenue in USD at the night's FX rat
 - cancellation rate = cancelled / (confirmed + cancelled)
 - conflict rate by region = rejected attempts / all attempts, per `home_region`
 
-Expectations: bronze `expect`; silver `expect_or_drop` with the dropped row copied to
-`quarantine_events` (unknown currency, night outside the stay, missing `aggregate_version` on a
+Expectations: bronze `expect`; silver `expect_all_or_drop` from one rule set, and
+`quarantine_events` keeps the rows breaking any rule of that same set, with the rule name (unknown currency, night outside the stay, missing `aggregate_version` on a
 state event); gold `expect_or_fail` on "no room-night has two confirmed bookings".
 
 Lakeflow Job `booking-refresh`: pipeline update -> SQL checks (gold invariant, row counts against
@@ -188,7 +188,9 @@ hotels for `q`, then keeps those with a free room for the stay from DSQL. The KB
 ## 7. DynamoDB Global Tables (spike and ADR)
 
 A spike, not a second stack: one MRSC table keyed by `room_night`, a conditional `PutItem`
-(`attribute_not_exists`) per night, the same k6 scenario against it. The ADR explains why it is the
+(`attribute_not_exists`) per night, tested locally against DynamoDB Local.
+In the cloud run a script on the session runner sends concurrent conditional writes for one item
+from both active regions to a real MRSC table. The ADR explains why it is the
 alternative and not the choice: MRSC has no transactions, so a multi-night booking cannot claim its
 nights atomically and needs a compensating saga; no TTL on MRSC; conditional writes do replace OCC
 for single-night claims. It ends with a "version 2" design detailed enough to implement.
@@ -234,9 +236,11 @@ bootstrap, documented step by step).
 - `terraform validate` passes for every component.
 
 **Slice 2, lakehouse.** Done when, locally:
-- pytest on the silver functions: duplicates by `event_id` collapse; out-of-order versions resolve to
-  the highest `aggregate_version`; quarantine rules route bad rows; FX conversion and hotel-local
+- pytest on the silver functions: duplicates by `event_id` collapse; quarantine rules route bad rows; FX conversion and hotel-local
   dates are correct across a time-zone boundary;
+- the CDC oracle query (`checks/cdc_latest.sql`) resolves out-of-order and duplicate events to the
+  highest `aggregate_version` on a fixture; in the cloud run the job compares it with the AUTO CDC
+  output and fails on any difference;
 - gold SQL is checked against a fixed fixture with hand-computed occupancy, ADR and RevPAR;
 - `databricks bundle validate` needs workspace auth, so it runs in the cloud run.
 
@@ -251,6 +255,7 @@ Local, and the ADR is written.
 - the DSQL invariant query returns zero rows;
 - the gold expectation passed and the dashboard shows data from both regions;
 - `/search` returned only hotels with availability;
+- the MRSC script: exactly one conditional write per item succeeded across both regions;
 - `make down` completed and the cost report is under $7.
 
 **Packaging.** Done when the README has the architecture diagram, 3-5 ADRs, the cost report, the
