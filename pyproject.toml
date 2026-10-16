@@ -42,3 +42,5 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# ops/ holds the session scripts run as `python -m ops.session`.
+pythonpath = ["."]

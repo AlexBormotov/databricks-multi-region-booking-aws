@@ -18,11 +18,14 @@ $(wordlist 2,$(words $(GOALS)),$(GOALS)):
 else
 
 SCALE ?= small
+SEED ?= 7
+# Kept by `make down` (plan D11): free while idle, and the MRSC table may refuse deletion for 24 h.
+PERSISTENT := --filter '!./us-east-1/landing' --filter '!./us-east-1/mrsc'
 
-.PHONY: help sync lint test test-integration security package plan plan-asl up demo down cost-report
+.PHONY: help sync lint test test-integration security package plan plan-asl up demo down reap 	cost-report
 
 help:
-	@echo "targets: lint test test-integration security plan up demo down cost-report"
+	@echo "targets: lint test test-integration security plan up demo down reap cost-report"
 
 sync:
 	uv sync --frozen
@@ -71,7 +74,22 @@ plan-asl:
 	cat /tmp/asl-result.json
 	grep -q '"result": "OK"' /tmp/asl-result.json
 
-up demo down cost-report:
-	@echo "$@: implemented in the cloud slice" && exit 1
+# The expiry is written first, so the reaper also cleans up after an `up` that fails half-way.
+up: sync package
+	python -m ops.session expiry-set
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache 		-- apply -input=false -auto-approve
+	python -m ops.session prepare --seed $(SEED) --scale $(SCALE)
+
+# Destroying the functions reads the zip's hash, so `down` builds it too.
+down: sync package
+	python -m ops.session empty-landing
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(PERSISTENT) 		-- destroy -input=false -auto-approve
+	python -m ops.session expiry-clear
+
+reap: sync
+	if python -m ops.session due; then $(MAKE) down; else echo "no expired session"; fi
+
+demo cost-report:
+	@echo "$@: implemented in slice C2" && exit 1
 
 endif
