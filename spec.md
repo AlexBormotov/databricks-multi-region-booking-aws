@@ -2,7 +2,8 @@
 
 Status: approved by the owner on 2026-10-14. Implements `intent.md`. Amended on 2026-10-14 by
 decisions D1-D3 of `plan.md`, and on 2026-10-15 by the slice 1 review (API `400`/`404`,
-`PaymentRefunded` event id), and on 2026-10-15 by decisions D6-D8 of `plan.md`.
+`PaymentRefunded` event id), and on 2026-10-15 by decisions D6-D8 of `plan.md`, and on 2026-10-16 by decisions D10-D12 and
+D14 of the cloud-slice `plan.md`.
 
 Every slice ends with a checkable completion condition. "Local" means `make` targets inside the dev
 container, at $0. "Cloud" means the single recorded `cloud-session` run. A claim marked
@@ -24,7 +25,8 @@ transition is legal. Every transition increments `bookings.version` by 1.
 ## 2. Transactional store (Aurora DSQL)
 
 Region set: us-east-1 and us-east-2 active, us-west-2 witness. Lambdas reach DSQL through its public
-endpoint with IAM auth tokens; no VPC and no NAT.
+endpoint with IAM auth tokens; no VPC and no NAT. They connect as the role `booking_app`, which has
+DML on the booking tables only; migrations and seeding run as `admin` from the session runner.
 
 Tables (all keys are UUIDs unless stated):
 
@@ -133,7 +135,9 @@ pollers put to that stream; the us-east-2 poller calls it cross-region with the 
 down, us-east-2 rows wait in the outbox (`published_at IS NULL`) and drain on recovery. Firehose
 partitions by the record's `home_region`: prefix `events/region=<r>/dt=<yyyy-mm-dd>/`, gzip JSON
 lines. Historical data is written by the generator to `events/region=<r>/backfill/`.
-Reference data (hotels, rooms, FX rates) lands as files under `reference/`.
+Reference data (hotels, rooms, FX rates) lands as files under `reference/`. Unity Catalog reads the
+bucket through a storage credential and an external location. If the workspace cannot create them,
+the runner copies the landing prefix into a UC managed volume and the pipeline reads that instead.
 
 ## 5. Lakehouse (Databricks on AWS, Unity Catalog, us-east-1)
 
@@ -204,7 +208,12 @@ for single-night claims. It ends with a "version 2" design detailed enough to im
 - Session expiry: `make up` writes an expiry time (default +2 h) to SSM Parameter Store; a GitHub
   Actions cron every 30 minutes runs `make down` once it passes. Budget alert at $12 to email.
 - Persistent, idle-free: Terraform state bucket and lock, GitHub OIDC roles (read-only for `plan`,
-  deploy for `cloud-session`), budget, GHCR image.
+  deploy for `cloud-session`), budget, GHCR image. Also, created by the first `make up` and kept by
+  `make down`: the landing bucket (emptied), the UC storage credential, external location and
+  catalog, and the empty MRSC table.
+- Cost report: `make cost-report DATE=<session date>` runs the day after the session, because Cost
+  Explorer lags by up to 24 h. It filters AWS costs by the `project` cost allocation tag and adds the
+  Databricks usage from `system.billing.usage` at list price.
 - IaC: Terraform modules plus Terragrunt live tree `live/demo-prod/<region>/<component>`.
 
 ## 9. CI/CD
