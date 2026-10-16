@@ -1,11 +1,5 @@
 # The single event stream (plan decision D2): Kinesis -> Firehose -> landing bucket, us-east-1.
 
-data "aws_caller_identity" "this" {}
-
-locals {
-  account_id = data.aws_caller_identity.this.account_id
-}
-
 resource "aws_kinesis_stream" "events" {
   name             = "booking-events"
   retention_period = 24
@@ -14,29 +8,6 @@ resource "aws_kinesis_stream" "events" {
   kms_key_id      = "alias/aws/kinesis"
   stream_mode_details {
     stream_mode = "ON_DEMAND"
-  }
-}
-
-# Destroyed with the session; its contents are synthetic.
-resource "aws_s3_bucket" "landing" {
-  bucket        = "booking-landing-${local.account_id}"
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_public_access_block" "landing" {
-  bucket                  = aws_s3_bucket.landing.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "landing" {
-  bucket = aws_s3_bucket.landing.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
   }
 }
 
@@ -69,7 +40,7 @@ resource "aws_iam_role_policy" "firehose" {
       {
         Effect   = "Allow"
         Action   = ["s3:AbortMultipartUpload", "s3:GetBucketLocation", "s3:GetObject", "s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:PutObject"]
-        Resource = [aws_s3_bucket.landing.arn, "${aws_s3_bucket.landing.arn}/*"]
+        Resource = [var.landing_bucket_arn, "${var.landing_bucket_arn}/*"]
       },
     ]
   })
@@ -86,7 +57,7 @@ resource "aws_kinesis_firehose_delivery_stream" "landing" {
 
   extended_s3_configuration {
     role_arn            = aws_iam_role.firehose.arn
-    bucket_arn          = aws_s3_bucket.landing.arn
+    bucket_arn          = var.landing_bucket_arn
     prefix              = "events/region=!{partitionKeyFromQuery:home_region}/dt=!{timestamp:yyyy-MM-dd}/"
     error_output_prefix = "errors/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/"
     compression_format  = "GZIP"
