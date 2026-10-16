@@ -9,6 +9,7 @@ locals {
     STREAM_NAME       = var.stream_name
     STATE_MACHINE_ARN = var.state_machine_arn
     HOLD_TTL_S        = tostring(var.hold_ttl_s)
+    KNOWLEDGE_BASE_ID = var.knowledge_base_id
   }
   dsql_connect = { Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }
   put_events   = { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn }
@@ -22,6 +23,7 @@ locals {
         local.put_events, # rejected-attempt telemetry
         { Effect = "Allow", Action = "dynamodb:PutItem", Resource = var.guest_vault_arns },
         { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
+        { Effect = "Allow", Action = "bedrock:Retrieve", Resource = var.knowledge_base_arn },
       ]
     }
     poller = {
@@ -30,7 +32,7 @@ locals {
       statements = [local.dsql_connect, local.put_events]
     }
   }
-  routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel"]
+  routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel", "GET /search"]
 }
 
 data "aws_iam_policy_document" "lambda_trust" {
