@@ -7,6 +7,9 @@ services:
     volumes:
       - .:/workspace
       - venv:/opt/venv
+      # `--provider-cache` links providers from here into each unit's .terraform; without a volume
+      # the links dangle in the next container, and `make down` cannot read outputs.
+      - terragrunt-cache:/root/.cache/terragrunt
       - ${HOME:-${USERPROFILE}}/.aws:/root/.aws
     environment:
       DATABASE_URL: postgresql://booking:booking@postgres:5432/booking
@@ -46,3 +49,4 @@ services:
 
 volumes:
   venv:
+  terragrunt-cache:
