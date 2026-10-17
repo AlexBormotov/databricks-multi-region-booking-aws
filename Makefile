@@ -5,8 +5,8 @@ GOALS := $(or $(MAKECMDGOALS),help)
 
 ifndef IN_DEV_CONTAINER
 
-# Only test-integration needs the emulators; other goals skip starting them.
-DEPS := $(if $(filter test-integration,$(GOALS)),,--no-deps)
+# Only test-integration and k6-local need the emulators; other goals skip starting them.
+DEPS := $(if $(filter test-integration k6-local,$(GOALS)),,--no-deps)
 
 .PHONY: $(GOALS)
 $(firstword $(GOALS)):
@@ -22,10 +22,11 @@ SEED ?= 7
 # Kept by `make down` (plan D11): free while idle, and the MRSC table may refuse deletion for 24 h.
 PERSISTENT := --filter '!./us-east-1/landing' --filter '!./us-east-1/mrsc'
 
-.PHONY: help sync lint test test-integration security package plan plan-asl up demo down reap 	cost-report
+.PHONY: help sync lint test test-integration security package plan plan-asl up demo down reap \
+	cost-report k6-local
 
 help:
-	@echo "targets: lint test test-integration security plan up demo down reap cost-report"
+	@echo "targets: lint test test-integration security plan up demo down reap cost-report k6-local"
 
 sync:
 	uv sync --frozen
@@ -77,19 +78,41 @@ plan-asl:
 # The expiry is written first, so the reaper also cleans up after an `up` that fails half-way.
 up: sync package
 	python -m ops.session expiry-set
-	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache 		-- apply -input=false -auto-approve
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+		-- apply -input=false -auto-approve
 	python -m ops.session prepare --seed $(SEED) --scale $(SCALE)
 
 # Destroying the functions reads the zip's hash, so `down` builds it too.
 down: sync package
 	python -m ops.session empty-landing
-	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(PERSISTENT) 		-- destroy -input=false -auto-approve
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(PERSISTENT) \
+		-- destroy -input=false -auto-approve
 	python -m ops.session expiry-clear
 
 reap: sync
 	if python -m ops.session due; then $(MAKE) down; else echo "no expired session"; fi
 
-demo cost-report:
-	@echo "$@: implemented in slice C2" && exit 1
+# The contention scenario against the API handler on PostgreSQL, before any cloud spend.
+K6_ATTEMPTS ?= 1000
+k6-local: sync
+	mkdir -p artifacts
+	rm -f /tmp/room.json
+	python load/local_api.py --port 8080 --room-file /tmp/room.json & server=$$!; \
+	for i in $$(seq 60); do [ -s /tmp/room.json ] && break; sleep 1; done; \
+	k6 run --quiet -e API_URLS=http://127.0.0.1:8080 -e ATTEMPTS=$(K6_ATTEMPTS) \
+		-e START_AT=$$(python -c "import time;print(int(time.time()*1000)+5000)") \
+		-e HOTEL_ID=$$(python -c "import json;print(json.load(open('/tmp/room.json'))['hotel_id'])") \
+		-e ROOM_ID=$$(python -c "import json;print(json.load(open('/tmp/room.json'))['room_id'])") \
+		-e SUMMARY=artifacts/k6-local.json load/contention.js; \
+	status=$$?; kill $$server; [ $$status -eq 0 ] && \
+		python -m ops.demo check-k6 --attempts $(K6_ATTEMPTS) artifacts/k6-local.json
+
+# Every step runs and writes artifacts/; the target fails if any step failed.
+demo: sync
+	python -m ops.demo run --seed $(SEED) --scale $(SCALE)
+
+# Cost Explorer lags by up to 24 h: run it the day after the session.
+cost-report: sync
+	python -m ops.cost_report --date $(DATE)
 
 endif

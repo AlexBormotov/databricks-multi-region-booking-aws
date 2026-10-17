@@ -1,5 +1,4 @@
 # The one paid run: make up -> make demo -> collect artifacts -> make down, whatever happened before.
-# demo is a stub until slice C2.
 name: cloud-session
 
 on:
