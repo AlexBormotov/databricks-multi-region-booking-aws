@@ -147,25 +147,61 @@ def traffic(ctx, bookings: int = 200) -> dict:
     }
 
 
+def fill(api: str, rooms: list[dict], stay: tuple[date, date]) -> list[int]:
+    """Books every given room for the stay; returns the statuses."""
+    return [
+        call("POST", f"{api}/bookings", {
+            "hotel_id": r["hotel_id"], "room_id": r["room_id"], "guest_id": str(uuid.uuid4()),
+            "check_in": str(stay[0]), "check_out": str(stay[1]),
+        }, {"idempotency-key": str(uuid.uuid4())})[0]
+        for r in rooms
+    ]  # fmt: skip
+
+
+def search_ids(api: str, q: str, stay: tuple[date, date]) -> tuple[int, list[str]]:
+    query = urlencode({"q": q, "check_in": stay[0], "check_out": stay[1]})
+    status, body = call("GET", f"{api}/search?{query}")
+    return status, [h["hotel_id"] for h in body.get("hotels", [])]
+
+
 def search(ctx) -> dict:
-    stay = SEARCH_STAY
+    """Every hotel /search returns has a free room, and a hotel booked out for the stay is left
+    out even when the query names it, while the same query on other dates returns it."""
+    stay, other_stay = (
+        SEARCH_STAY,
+        (SEARCH_STAY[0] + timedelta(days=3), SEARCH_STAY[1] + timedelta(days=3)),
+    )
+    hotel = ctx["hotels"][0]
+    filled = fill(
+        ctx["apis"][0], [r for r in ctx["rooms"] if r["hotel_id"] == hotel["hotel_id"]], stay
+    )
+    named = f"{hotel['name']}, a hotel in {hotel['city']}"
     found, failures = {}, []
+    if set(filled) != {201}:
+        failures.append(f"could not book out {hotel['name']}: {filled}")
     for api in ctx["apis"]:
-        query = urlencode({"q": "quiet hotel with a pool near the park",
-                           "check_in": stay[0], "check_out": stay[1]})  # fmt: skip
-        status, body = call("GET", f"{api}/search?{query}")
-        hotels = [h["hotel_id"] for h in body.get("hotels", [])]
-        found[api] = {"status": status, "hotels": hotels}
-        if status != 200 or not hotels:
-            failures.append(f"{api}/search answered {status} with {len(hotels)} hotels")
-        if bad := unavailable(api, hotels, stay):
-            failures.append(f"{api}/search returned hotels without a free room: {bad}")
-    # The check itself must go red: an unknown hotel has no free room.
+        results = {
+            "generic": search_ids(api, "quiet hotel with a pool near the park", stay),
+            "named_booked_out": search_ids(api, named, stay),
+            "named_free": search_ids(api, named, other_stay),
+        }
+        found[api] = {k: {"status": st, "hotels": ids} for k, (st, ids) in results.items()}
+        for kind, (status, ids) in results.items():
+            if status != 200:
+                failures.append(f"{api}/search ({kind}) answered {status}")
+            when = other_stay if kind == "named_free" else stay
+            if bad := unavailable(api, ids, when):
+                failures.append(f"{api}/search ({kind}) returned hotels without a free room: {bad}")
+        if hotel["hotel_id"] in results["named_booked_out"][1]:
+            failures.append(f"{api}/search returned {hotel['name']}, which is booked out")
+        if hotel["hotel_id"] not in results["named_free"][1]:
+            failures.append(f"{api}/search did not return {hotel['name']} on free dates")
+    # The availability check itself must go red: an unknown hotel has no free room.
     control = unavailable(ctx["apis"][0], [str(uuid.uuid4())], stay)
     if len(control) != 1:
         failures.append("the availability check did not flag an unknown hotel")
-    return {"stay": [str(d) for d in stay], "found": found, "control_flagged": control,
-            "failures": failures}  # fmt: skip
+    return {"stay": [str(d) for d in stay], "booked_out": hotel, "found": found,
+            "control_flagged": control, "failures": failures}  # fmt: skip
 
 
 def k6(ctx) -> dict:
@@ -266,6 +302,7 @@ def context(seed: int, scale: str) -> dict:
     return {
         "seed": seed,
         "scale": scale,
+        "hotels": ref["hotels"],
         "rooms": sorted(ref["rooms"], key=lambda r: r["room_id"]),
         "apis": [outputs(f"{r}/api")["api_url"].rstrip("/") for r in ("us-east-1", "us-east-2")],
         "landing": outputs("us-east-1/landing")["bucket"],
