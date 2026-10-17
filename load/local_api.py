@@ -1,5 +1,5 @@
 """The API handler behind a local HTTP server, so k6 can run the contention scenario before any
-cloud spend (`make k6-local`). PostgreSQL stands in for DSQL and moto for Kinesis and Step Functions.
+cloud spend (`make k6-local`). PostgreSQL stands in for DSQL, moto for Kinesis and Step Functions.
 
     python load/local_api.py --port 8080 --room-file /tmp/room.json
 
