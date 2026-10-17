@@ -107,7 +107,12 @@ k6-local: sync
 	status=$$?; kill $$server; [ $$status -eq 0 ] && \
 		python -m ops.demo check-k6 --attempts $(K6_ATTEMPTS) artifacts/k6-local.json
 
-demo cost-report:
-	@echo "$@: implemented in slice C2" && exit 1
+# Every step runs and writes artifacts/; the target fails if any step failed.
+demo: sync
+	python -m ops.demo run --seed $(SEED) --scale $(SCALE)
+
+# Cost Explorer lags by up to 24 h: run it the day after the session.
+cost-report: sync
+	python -m ops.cost_report --date $(DATE)
 
 endif

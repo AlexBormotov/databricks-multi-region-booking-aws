@@ -1,0 +1,19 @@
+#!/bin/bash
+# Runs once at boot; the instance terminates itself when done, whatever the outcome.
+set -euxo pipefail
+trap 'shutdown -h now' EXIT
+
+cd /tmp
+curl -fsSL "https://github.com/grafana/k6/releases/download/v${k6_version}/k6-v${k6_version}-linux-arm64.tar.gz" \
+  | tar -xz --strip-components=1 "k6-v${k6_version}-linux-arm64/k6"
+cat > contention.js <<'K6SCRIPT'
+${script}
+K6SCRIPT
+
+# Every VU is held until START_AT inside the script, so the three regions start together.
+./k6 run --quiet \
+  -e API_URLS='${api_urls}' -e HOTEL_ID='${hotel_id}' -e ROOM_ID='${room_id}' \
+  -e CHECK_IN='${check_in}' -e CHECK_OUT='${check_out}' \
+  -e ATTEMPTS='${attempts}' -e VUS='${attempts}' -e START_AT='${start_at_ms}' \
+  -e SUMMARY=summary.json contention.js || true
+aws s3 cp summary.json '${summary_uri}'

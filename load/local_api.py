@@ -10,6 +10,7 @@ It recreates the database `k6_local`, migrates and seeds it, and writes the cont
 import argparse
 import json
 import os
+import re
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
@@ -24,7 +25,12 @@ from booking.handlers import api, runtime
 from booking.seed import seed
 
 DATABASE = "k6_local"
-FAKE_AWS = {"region_name": "us-east-1", "aws_access_key_id": "x", "aws_secret_access_key": "x"}
+# DynamoDB Local keeps one database per access key; these match the integration tests'.
+FAKE_AWS = {
+    "region_name": "us-east-1",
+    "aws_access_key_id": "testing",
+    "aws_secret_access_key": "testing",
+}
 
 
 def fresh_database() -> str:
@@ -36,8 +42,9 @@ def fresh_database() -> str:
     return make_conninfo(admin_url, dbname=DATABASE)
 
 
-def fake_aws() -> None:
-    """A stream and a state machine in moto, so telemetry and saga starts succeed."""
+def fake_aws() -> dict[str, str]:
+    """A stream and a state machine in moto, so telemetry and saga starts succeed; returns the
+    environment the handler needs to find them."""
     endpoint = os.environ["MOTO_ENDPOINT_URL"]
     stream = f"events-{uuid.uuid4().hex[:8]}"
     boto3.client("kinesis", endpoint_url=endpoint, **FAKE_AWS).create_stream(
@@ -48,13 +55,17 @@ def fake_aws() -> None:
         definition=json.dumps({"StartAt": "Done", "States": {"Done": {"Type": "Succeed"}}}),
         roleArn="arn:aws:iam::123456789012:role/booking-saga",
     )["stateMachineArn"]
-    os.environ.update(
-        AWS_REGION="us-east-1",
-        AWS_ACCESS_KEY_ID="x",
-        AWS_SECRET_ACCESS_KEY="x",
-        STREAM_NAME=stream,
-        STATE_MACHINE_ARN=machine,
-    )
+    return {
+        "AWS_REGION": "us-east-1",
+        "AWS_ACCESS_KEY_ID": "testing",
+        "AWS_SECRET_ACCESS_KEY": "testing",
+        "STREAM_NAME": stream,
+        "STATE_MACHINE_ARN": machine,
+    }
+
+
+# API Gateway matches path templates; the one route with a path parameter is matched here.
+CANCEL = re.compile(r"/bookings/(?P<booking_id>[^/]+)/cancel")
 
 
 class Server(ThreadingHTTPServer):
@@ -66,11 +77,14 @@ class Handler(BaseHTTPRequestHandler):
     def _serve(self):
         url = urlsplit(self.path)
         length = int(self.headers.get("content-length") or 0)
+        route, params = f"{self.command} {url.path}", None
+        if match := CANCEL.fullmatch(url.path):
+            route, params = f"{self.command} /bookings/{{booking_id}}/cancel", match.groupdict()
         event = {
-            "routeKey": f"{self.command} {url.path}",
+            "routeKey": route,
             "headers": {k.lower(): v for k, v in self.headers.items()},
             "queryStringParameters": dict(parse_qsl(url.query)) or None,
-            "pathParameters": None,
+            "pathParameters": params,
             "body": self.rfile.read(length).decode() if length else None,
         }
         response = api.handler(event, None)
@@ -95,7 +109,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.environ["DATABASE_URL"] = fresh_database()
-    fake_aws()
+    os.environ.update(fake_aws())
     with create_pool(max_size=1) as admin:
         migrate(admin)
         seed(admin, 7, "small")
