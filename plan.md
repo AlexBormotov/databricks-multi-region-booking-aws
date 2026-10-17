@@ -1,180 +1,214 @@
-# Plan: slices 2 to 4
+# Plan: the cloud slice
 
-Status: approved by the owner on 2026-10-15, with decisions D4-D7 as proposed and D8 option (b). Implements `spec.md` sections 4 to 7 and 10 (slices 2, 3
-and 4). The plan for slices 0 and 1 is in git history at `63ecdc0`. The cloud run gets its own
-plan after this one lands.
+Status: approved by the owner on 2026-10-16, with decisions D9-D14 as proposed. Implements `spec.md` sections 8 to 10: the session lifecycle,
+the demo, the cloud run and the cost report. The plan for slices 2 to 4 is in git history at
+`2d02db8`.
 
-## 1. Facts this plan rests on (checked 2026-10-15)
+## 1. Facts this plan rests on (checked 2026-10-16)
 
 | Fact | Source | Consequence |
 |---|---|---|
-| Pipeline Python API: `from pyspark import pipelines as dp`; `@dp.table`, `@dp.materialized_view`, `dp.create_streaming_table`, `dp.create_auto_cdc_flow(..., sequence_by, stored_as_scd_type=1 or 2)`; expectations `expect`, `expect_or_drop`, `expect_or_fail` and their `expect_all_*` forms | Databricks LDP Python reference | bronze and silver as `spec.md` 5 describes them |
-| Importing a module with pipeline decorators outside a pipeline run raises `GRAPH_ELEMENT_DEFINED_OUTSIDE_OF_DECLARATIVE_PIPELINE` | Spark source, `pyspark/pipelines/graph_element_registry.py` | transformations live in an undecorated package; pipeline files are thin wrappers |
-| AUTO CDC with SCD2 and expectations exist only on Databricks; open-source Spark 4.2 has AUTO CDC with SCD1 only, and 4.1 has none | Spark 4.1.0 and 4.2.0 source, Databricks docs | AUTO CDC cannot run locally; see decision D7 |
-| The documented quarantine pattern flags rows with `expect_all` and an `is_quarantined` column; it does not copy dropped rows | Databricks expectation patterns | see 3.2 |
-| Serverless pipelines run DBR 18: Spark 4.1.0, Python 3.12.3, Java 21 | Databricks release notes, DBR 18.2 | see decisions D4 and D5 |
-| PySpark 4.1 supports Python 3.13 and needs Java 17, 21 or 25; Debian trixie has `openjdk-21-jre-headless` (about 200 MB installed); the PySpark package is a 450 MB sdist | PyPI, Spark docs, packages.debian.org | see decision D4 |
-| Materialized views carry expectations, including `ON VIOLATION FAIL UPDATE` | Databricks expectations | the gold invariant is an expectation on a materialized view |
-| Bundles: pipeline `serverless`, `catalog`, `schema`, `root_path`, `libraries.glob`, `environment.dependencies`; `resources.dashboards` with `file_path` to `.lvdash.json`; job `trigger.file_arrival` (`url`, `min_time_between_triggers_seconds`), `sql_task`, `dashboard_task` | Databricks bundle resource reference | the bundle layout in section 4 |
-| A file-arrival trigger needs a Unity Catalog external location or volume | Databricks file-arrival triggers | the landing bucket becomes an external location in the cloud slice |
-| Whether a trial workspace may create a storage credential and an external location on the owner's S3 is not documented | Databricks free-trial page | a cloud-slice risk, see section 7 |
-| Bedrock Knowledge Bases support S3 Vectors in us-east-1 with Titan Text Embeddings V2 (1024, 512 or 256 dims); at most 1 KB of custom metadata and 35 keys per vector | Bedrock and S3 Vectors docs | metadata is `hotel_id`, `city`, `country` only |
-| Terraform 6.x has `aws_s3vectors_vector_bucket`, `aws_s3vectors_index` and `storage_configuration { type = "S3_VECTORS" }` on `aws_bedrockagent_knowledge_base` | AWS provider docs | the search module is plain Terraform |
-| moto has S3 Vectors without `query_vectors` | moto docs | retrieval is stubbed at the client boundary, as `spec.md` slice 3 already says |
-| DynamoDB MRSC: exactly three regions (or two plus a witness); conditional writes see the latest version; no transactions, no TTL, no LSIs; concurrent writes to one item raise `ReplicatedWriteConflictException` | DynamoDB MRSC docs | confirms the trade-offs `spec.md` 7 names; see decision D8 |
-| DynamoDB Local supports condition expressions and transactions but has no regions, so no MRSC | DynamoDB Local usage notes | the local spike proves claim logic, not cross-region behaviour |
+| A Databricks trial lasts 14 days with up to $400 of usage and no card. Express signup gives a serverless workspace with default storage. Without an upgrade, access pauses at the end, and assets are deleted 60 days later | Databricks free-trial and express-setup docs; databricks.com/try-databricks | the trial starts only when every line of code is merged (D9) |
+| A workspace is created in the UI. `databricks_mws_workspaces` needs account-level API access, which is not confirmed for trial accounts. Bundles authenticate to a workspace with OAuth M2M | Terraform provider docs v1.137.0; Databricks OAuth M2M docs | the owner creates the workspace and a service principal by hand (step 9) |
+| A UC storage credential trusts the Databricks UC master role with an external ID, and the role must also trust itself. Docs do not say whether a trial may create one on the customer's S3 | Databricks S3 external location docs (2026-10-06) | this is the first thing the trial checks, with a fallback (D10) |
+| File-arrival triggers need UC and an external location or volume. They poll about once a minute, the minimum spacing is 60 s, and each location allows up to 10,000 files without file events | Databricks file-arrival trigger docs (2026-10-07) | the demo starts the job explicitly and keeps the trigger (D13) |
+| List prices: serverless pipelines and jobs cost $0.35/DBU, serverless SQL $0.70/DBU, and a 2X-Small warehouse uses 4 DBU/h. A run is estimated at $2-3, inside the trial credit | third-party pricing guides; the official tables did not render | cost estimate in section 6 |
+| Titan Text Embeddings V2 is enabled by default and costs $0.02 per 1M tokens. S3 Vectors has no hourly charge | Bedrock model access docs; S3 pricing | the plan risk on model access is closed |
+| DSQL bills $8 per 1M DPU and has no idle charge. Multi-region writes double the write DPU. Creation and deletion time is undocumented | DSQL pricing and user guide | `make up` waits on DSQL with the provider's 30-minute timeout |
+| A DynamoDB table used to add a replica cannot be deleted for 24 h. Whether this applies to MRSC is unconfirmed. MRSC tables support Streams | DynamoDB global tables docs | the MRSC table is persistent (D11); ADR 1's "verify" item is answered |
+| Kinesis on-demand costs $0.04 per stream-hour. Firehose dynamic partitioning costs $0.02/GB plus $0.005 per 1,000 objects | Kinesis and Firehose pricing | cents per session |
+| Default spot quota is 5 vCPU per region | EC2 spot limits docs | one c7g.large per region for k6; the quota is checked before the run |
 
 ## 2. Decisions for the owner
 
-**D4. Local Spark in the dev image.** The silver functions and the gold SQL need a Spark engine to
-be tested. Proposed: add `openjdk-21-jre-headless` to the dev image (about 200 MB) and `pyspark==4.1.*`
-to the dev dependencies, matching DBR 18 (Spark 4.1, Java 21). The venv grows by about 450 MB. It
-is cached in the `venv` volume locally, and CI downloads it in each job that syncs. Alternative:
-DuckDB for the gold SQL and plain Python for silver. It is lighter, but its SQL dialect differs
-from Databricks SQL, so a green test would prove less.
+**D9. When the trial starts.** The 14 days start at signup. Proposed: write and merge everything,
+including the Databricks Terraform and the demo steps, then sign up. Run 1 is AWS only and happens
+before the trial. Run 2 is the full run and happens within days of signup.
 
-**D5. Lakehouse code targets Python 3.12.** Serverless pipelines run 3.12.3, while the project is
-3.13. Proposed: `src/lakehouse/` avoids 3.13-only features, and ruff checks it with
-`per-file-target-version` set to `py312`. The pipeline gets the code as source files synced by the
-bundle under `root_path`, not as a wheel. If the import fails in the cloud, the fallback is a wheel
-in a UC volume through `environment.dependencies`.
+**D10. Where the lakehouse reads from.** Proposed: a UC storage credential and an external location
+on the landing bucket, as `spec.md` 4 says. Fallback, if the trial refuses the credential: after the
+Firehose flush, the runner copies the landing prefix into a UC managed volume, and Auto Loader and
+the file-arrival trigger read the volume instead. The fallback is written only if the probe in step
+10 fails.
 
-**D6. Quarantine through one rule set.** Each silver rule is a name plus a SQL expression, kept in
-one dict. The silver table applies them with `expect_all_or_drop`, which gives the pipeline UI its
-metrics. A sibling streaming table `quarantine_events` keeps the rows that break any rule, with the
-name of the first rule broken. One dict feeds both, so they cannot drift apart. This follows the
-documented flag pattern rather than a copy that the platform does not offer.
+**D11. What persists between sessions.** Each of these is free while idle:
+- the landing bucket, emptied by `make down`;
+- the UC storage credential, external location and catalog;
+- the empty on-demand MRSC table.
 
-**D7. AUTO CDC is checked by an oracle query, not a local test.** `spec.md` slice 2 asks pytest to
-show that out-of-order versions resolve to the highest `aggregate_version`. That behaviour belongs
-to AUTO CDC, which runs only on Databricks. Proposed: `checks/cdc_latest.sql` computes each
-booking's state from `events_dedup` by the highest version. Locally it is tested on a fixture with
-shuffled and duplicate events, and it stands in for AUTO CDC in the local end-to-end test. In the
-cloud, the `booking-refresh` job runs it against `silver.bookings` and fails on any difference. This
-amends the wording of `spec.md` slice 2.
+Proposed: create them once, by `make up` if absent, and keep them out of `make down`. This avoids
+re-registering UC objects every session and the possible 24 h delete block on MRSC. `spec.md` 8 gains
+them in its persistent list. Alternative: create and destroy everything per session, and risk a
+failed `make down` on MRSC.
 
-**D8. Cross-region evidence for the DynamoDB spike.** DynamoDB Local has no regions, so the local
-test proves only the claim logic. Option (a): local only, and the ADR says the cross-region behaviour
-is documented, not measured. Option (b): the cloud run adds one on-demand MRSC table (us-east-1,
-us-east-2, witness us-west-2). A script on the session runner then fires concurrent conditional
-writes at one item from both regions, which costs cents. No Lambda and no second k6 run are
-involved. Chosen: (b). It replaces "the same k6 scenario against it" in `spec.md` 7 either way.
+**D12. The DSQL role the Lambdas use.** Today they connect as `admin`. Proposed: a migration creates
+the role `booking_app`, granted only DML on the booking tables. `make up` runs `AWS IAM GRANT` for
+the Lambda roles, and their IAM policy becomes `dsql:DbConnect`. Alternative: keep `admin` and record
+it as a known limit.
 
-## 3. Design choices, with their checks
+**D13. How the demo runs the lakehouse.** Proposed: `make demo` waits for the Firehose flush, then
+starts `booking-refresh` with `databricks bundle run` and waits for it, so the run is timed and
+gated. The file-arrival trigger stays on to show the event-driven path. A triggered run that overlaps
+is queued behind it, because a job allows one concurrent run by default.
 
-### 3.1 Code layout
+**D14. The cost report.** AWS Cost Explorer lags by up to 24 h. Proposed:
+- `make cost-report DATE=<session date>` runs the next day and filters on the `project` tag;
+- the owner activates `project` as a cost allocation tag once now, since activation also takes up to
+  24 h;
+- the Databricks share comes from `system.billing.usage` times list price;
+- if system tables are off on the trial, it comes from the account console's usage page.
 
-`src/lakehouse/` is plain PySpark: `DataFrame -> DataFrame` functions plus the rule dict, with no
-pipeline import. `databricks/pipeline/*.py` are thin wrappers that only decorate and call those
-functions. `databricks/pipeline/gold/*.sql` are materialized views. `databricks/checks/*.sql` are
-the job's SQL checks. Gold SQL names tables in full (`booking.silver.bookings`). The local test
-harness strips the `CREATE` header and the catalog prefix, then registers fixtures as temp views
-under the same names.
+## 3. Design
 
-### 3.2 Invariants and the check that goes red
+### 3.1 Session lifecycle
 
-| Invariant | Red check |
+`make up` does the following, in order:
+1. Writes the expiry (now + 2 h) to SSM `/booking/session/expires_at`.
+2. Applies the persistent components if absent (D11).
+3. Runs `terragrunt run --all apply` on the session components.
+4. Runs the migrations and seeds hotels and rooms from `generator.reference(seed, scale)` into DSQL
+   as `admin`.
+5. Grants `booking_app` to the Lambda roles (D12).
+6. Uploads the corpus and starts the KB ingestion job, then waits for it.
+7. Deploys the bundle (run 2 only).
+
+`make down` does the following:
+1. Empties the landing bucket.
+2. Runs `terragrunt run --all destroy` on the session components.
+3. Deletes the SSM parameter.
+
+It runs with `if: always()`. The reaper workflow runs `make down` when the expiry has passed;
+`REAPER_ENABLED` is set once run 1 is green.
+
+### 3.2 The demo
+
+`make demo SCALE=small` does the following, in order:
+1. Backfills `generator.write` output to the landing bucket.
+2. Sends live traffic of a few hundred bookings through both API regions.
+3. Runs `/search` and checks that every hotel returned has a free room.
+4. Runs the k6 contention scenario.
+5. Runs the invariant query.
+6. Runs the MRSC script.
+7. Run 2 only: runs `booking-refresh` and exports the dashboard.
+
+Every step writes to `artifacts/`.
+
+**k6.** One spot c7g.large in each of us-east-1, us-east-2 and us-west-2 starts k6 at a shared start
+time. Together they send 1000 attempts at one room-night, split across both API regions. Each writes
+its summary to S3, the runner collects the summaries, and the k6 component is destroyed.
+
+**MRSC script.** `spike/dynamodb/mrsc_race.py` uses `claims.claim` from threads with clients in
+us-east-1 and us-east-2, over a fresh room-night per run, and records the winner count.
+
+### 3.3 Checks that go red
+
+| Claim | Check |
 |---|---|
-| one silver row per `event_id` | `test_dedup_collapses_duplicates` |
-| a row breaking a rule is dropped from silver and lands in quarantine with the rule name; no row is in both or in neither | `test_quarantine_partition`, one case per rule (unknown currency, night outside the stay, state event without `aggregate_version`) |
-| a booking's state is the one with the highest `aggregate_version`, whatever the arrival order | `test_cdc_oracle_out_of_order` on `checks/cdc_latest.sql` |
-| nights are hotel-local dates; lead time is counted in the hotel's time zone | `test_lead_time_across_midnight`: a booking at 23:30 UTC in a UTC-5 hotel and in a UTC+9 hotel |
-| revenue is in USD at the night's FX rate | `test_fx_per_night`: a stay that spans an FX rate change |
-| occupancy, ADR and RevPAR match a hand computation | `test_gold_kpis` on a fixed fixture, with the expected numbers written in the test |
-| no room-night has two confirmed bookings in gold | `test_gold_invariant` on `checks/gold_invariant.sql` with a planted double booking |
-| the generator is deterministic and emits the event contract | `test_generator_seed`, `test_generator_contract` |
-| `/search` returns only hotels with a free room | `test_search_filters_unavailable`, with retrieval stubbed and availability from PostgreSQL |
-| the corpus is deterministic for a seed and its metadata fits 1 KB | `test_corpus_seed`, `test_corpus_metadata_size` |
-| of concurrent claims on one room-night in DynamoDB, exactly one wins; a multi-night claim that fails part-way releases the nights it took | `test_spike_single_winner`, `test_spike_compensation` against DynamoDB Local |
-
-**Negative controls**, run once each, with their output in the PR description:
-- Remove the dedup step: `test_dedup_collapses_duplicates` and `test_demand_marts` (a rejected
-  attempt delivered twice) fail. The KPIs do not depend on dedup: the CDC state collapses repeats.
-- Plant a double booking in the fixture: `test_gold_invariant` reports it.
-- Drop the condition from the spike's `PutItem`: `test_spike_single_winner` fails.
-
-### 3.3 Local end to end
-
-`test_lakehouse_end_to_end` runs the generator at `SCALE=small` through the silver functions, the
-CDC oracle and the gold SQL in local Spark. It asserts that the gold invariant holds and that the
-KPIs are within their ranges (occupancy between 0 and 1, ADR above 0).
+| seed matches the lakehouse reference | `test_seed_matches_reference` against PostgreSQL |
+| the `booking_app` role cannot run DDL | `test_app_role_has_dml_only` against PostgreSQL |
+| the reaper acts only after expiry | `test_reaper_decision` with moto SSM |
+| the k6 scenario yields one `201` before we pay for it | `make k6-local`: k6 in the dev image against the API handler on a local HTTP adapter over PostgreSQL. Negative control: drop the `room_night` primary key, and it reports more than one `201` |
+| the MRSC script counts winners right | `test_mrsc_race` against DynamoDB Local with two clients |
+| the demo assertions fail loudly | each demo step exits non-zero on a broken claim; run 1 records one deliberate failure (an unknown `hotel_id` in `/search`) |
 
 ### 3.4 Reversal
 
-Everything is new files on branches, plus two lines in the dev image. Reversal is a `git revert`
-of each squash commit. Nothing touches the cloud.
+`make down` destroys every session resource. The persistent pieces of D11 are removed by
+`make destroy-persistent`, which is documented and never run by CI.
 
 ## 4. Files
 
 ```
-.devcontainer/Dockerfile                + openjdk-21-jre-headless
-pyproject.toml, uv.lock                 dev: pyspark==4.1.*; ruff per-file-target-version py312
-                                        for src/lakehouse
-Makefile                                `test` also runs tests/lakehouse
-src/booking/generator.py                deterministic history and reference data (hotels, rooms,
-                                        FX), same event contract
-src/lakehouse/rules.py                  silver rules: name -> SQL expression
-src/lakehouse/silver.py                 parse, dedup, state events, booking_nights, fx, dims,
-                                        quarantine split
-databricks/databricks.yml               bundle: pipeline, job booking-refresh, dashboard
-databricks/pipeline/bronze.py           Auto Loader wrapper
-databricks/pipeline/silver.py           decorated wrappers, AUTO CDC flows
-databricks/pipeline/gold/*.sql          materialized views from spec.md 5
-databricks/checks/*.sql                 gold_invariant, cdc_latest, row counts
-databricks/dashboards/booking.lvdash.json   three pages from spec.md 5
-src/booking/corpus.py                   templated descriptions and reviews, metadata sidecars
-src/booking/search.py                   KB retrieve, then the availability filter
-src/booking/handlers/api.py             + GET /search
-infra/modules/search/                   corpus bucket, vector bucket and index, KB, data source,
-                                        IAM role
-infra/live/demo-prod/us-east-1/search/terragrunt.hcl
-infra/modules/api/                      + /search route; IAM for bedrock:Retrieve on the KB
-spike/dynamodb/claims.py                per-night conditional PutItem, compensating delete
-tests/lakehouse/                        conftest (local SparkSession), silver, gold, checks,
-                                        generator, end to end
-tests/unit/test_corpus.py
-tests/integration/test_search.py, test_dynamodb_spike.py
-docs/adr/0001-dsql-over-dynamodb.md     ADR 1 from spec.md 11, with the "version 2" design
+Makefile                                 up, demo, down, cost-report, k6-local, destroy-persistent
+.devcontainer/Dockerfile                 + k6 binary (pinned)
+src/booking/seed.py                      reference hotels and rooms into the booking store
+src/booking/migrations/007_app_role.sql  booking_app role and grants (DSQL and PostgreSQL)
+src/booking/db.py                        connect as booking_app when DSQL_ROLE is set
+infra/modules/api/                       dsql:DbConnect for booking_app instead of admin
+infra/modules/landing/                   landing bucket moved out of stream (persistent)
+infra/modules/stream/                    reads the landing bucket instead of owning it
+infra/modules/mrsc/                      MRSC table, us-east-1 + us-east-2, witness us-west-2
+infra/modules/k6/                        one spot instance, user data runs k6, summary to S3
+infra/modules/databricks_uc/             storage credential role, UC credential, external location,
+                                         catalog and schemas (databricks provider)
+infra/live/demo-prod/...                 terragrunt files for the four modules above
+ops/session.py                           expiry, reaper decision, wait helpers, artifact writer
+ops/demo.py                              the demo steps of 3.2
+ops/cost_report.py                       Cost Explorer by tag plus Databricks usage
+spike/dynamodb/mrsc_race.py              cross-region race on one item
+load/contention.js                       k6 scenario
+load/local_api.py                        HTTP adapter over api.handler for k6-local
+.github/workflows/cloud-session.yml      Databricks secrets; artifacts
+.github/workflows/reaper.yml             real reap step
+tests/integration/test_seed.py, test_app_role.py, test_mrsc_race.py
+tests/unit/test_session.py
+docs/cloud-run.md                        owner's one-time steps: tag activation, spot quota check,
+                                         trial signup, service principal, GitHub secrets
+spec.md                                  amendments in section 7
 ```
 
 ## 5. Steps
 
-Each step ends with its check. Steps 1-6 are slice 2, steps 7-8 are slice 3, step 9 is slice 4.
-Each slice is one PR.
+Each step ends with its check.
 
-1. **Local Spark.** Check: `make test` starts a local SparkSession in the container and runs one
-   trivial query; the image builds in CI.
-2. **Generator.** Check: `test_generator_seed` and `test_generator_contract`.
-3. **Silver functions and rules.** Check: the silver rows of 3.2 green, then the dedup negative
-   control.
-4. **Checks and gold SQL.** Check: `test_cdc_oracle_out_of_order`, `test_gold_kpis` and
-   `test_gold_invariant` green, then the planted-double-booking control.
-5. **Pipeline wrappers, bundle, dashboard.** Check: `ruff` passes on the wrappers, and the bundle
-   JSON matches `databricks bundle schema` locally. `bundle validate` runs in the cloud run.
-6. **Local end to end.** Check: `test_lakehouse_end_to_end`.
-7. **Corpus and search.** Check: `test_corpus_seed`, `test_corpus_metadata_size`,
-   `test_search_filters_unavailable`, and a handler test for `GET /search`.
-8. **Search infra.** Check: `make plan` green for the new component, with its resource count in the
-   PR comment.
-9. **DynamoDB spike and ADR 1.** Check: `test_spike_single_winner` and `test_spike_compensation`
-   against DynamoDB Local, then the missing-condition control. The ADR is written with the
-   `domain-modeling` rules.
+**Slice C1, session lifecycle.** One PR.
+1. Seed and app role. Check: `test_seed_matches_reference` and `test_app_role_has_dml_only`.
+2. Landing and MRSC modules, and the api policy change. Check: `make plan` green, with the resource
+   counts in the PR.
+3. `make up` and `make down`, plus the expiry and the reaper. Check: `test_reaper_decision` and
+   `make plan`. Nothing is applied yet.
 
-## 6. Spec amendments on approval
+**Slice C2, the demo.** One PR.
+4. k6 scenario and `make k6-local`. Check: one `201` locally, then the negative control.
+5. The MRSC script. Check: `test_mrsc_race`.
+6. The demo steps and the k6 module. Check: the steps run end to end against the local stack where
+   an emulator exists; `make plan` is green for k6.
 
-- Slice 2: the out-of-order condition is checked by the CDC oracle (D7).
-- Section 7 and the cloud run: the cross-region evidence is the runner script (D8).
-- Section 5: `quarantine_events` is filled from the shared rule set (D6).
+**Run 1, AWS only.** The owner approves the `cloud-session` workflow. Pass conditions:
+- k6 gives exactly one `201` out of 1000;
+- the invariant query returns zero rows;
+- `/search` returns only hotels with availability;
+- the MRSC script records one winner;
+- `make down` completes.
 
-## 7. Risks carried to the cloud plan
+7. The owner activates the cost tag (D14) before run 1. `make cost-report` runs the next day.
 
-- A trial workspace may refuse an external location on the owner's S3. Auto Loader and the
-  file-arrival trigger both depend on it. The cloud plan starts by checking this on the workspace
-  the owner has.
-- Source files under `root_path` may not be importable by serverless pipelines (D5 fallback).
-- Titan V2 model access may need enabling in the Bedrock console once.
+**Slice C3, Databricks.** One PR.
+8. The `databricks_uc` module, bundle deploy in `make up`, and the lakehouse steps in `make demo`.
+   Check: `terraform validate` and offline `bundle validate`.
+9. The owner signs up for the trial, creates a service principal and stores its OAuth secret in the
+   `demo-prod` environment (`docs/cloud-run.md`).
+10. Probe: apply `databricks_uc` and run `bundle validate` against the workspace. If the credential
+    is refused, stop and write the D10 fallback.
+
+**Run 2, full.** Pass conditions: those of run 1, plus the gold expectation passed, the CDC oracle
+matched, and the dashboard shows both regions. `make cost-report` the next day must show less than
+$7.
+
+## 6. Cost estimate per full run
+
+| Item | Estimate |
+|---|---|
+| Databricks: pipeline update, checks, dashboard, warehouse about 20 min | $2-3 (trial credit) |
+| DSQL, Lambda, API Gateway, Step Functions, Kinesis, Firehose | under $0.50 |
+| Bedrock embeddings and S3 Vectors | under $0.05 |
+| k6: three c7g.large spot for about 15 min | under $0.05 |
+| Cost Explorer API calls | $0.01 per call |
+
+AWS pays under $1 per run, and the Databricks share comes out of the trial credit.
+
+## 7. Spec amendments on approval
+
+- Section 8: the persistent list gains the landing bucket, the UC objects and the MRSC table (D11).
+  The cost report runs the day after the session (D14).
+- Section 2: Lambdas connect as `booking_app` (D12).
+- Section 4: the volume fallback for landing (D10), used only if the probe fails.
 
 ## 8. Stop conditions
 
-Work stops and this plan returns for approval if a fact in section 1 proves false, if a file
-outside section 4 needs to change, or if a negative control fails to go red.
+Work stops and this plan returns for approval in any of these cases:
+- a fact in section 1 proves false;
+- a file outside section 4 needs to change;
+- a negative control fails to go red;
+- the trial probe refuses the storage credential;
+- either run costs more than $7.

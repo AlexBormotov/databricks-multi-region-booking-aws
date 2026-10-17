@@ -1,5 +1,5 @@
 # Auto-destroy: every 30 minutes, run make down once the session expiry stored in SSM has passed.
-# Skipped until the cloud slice sets the repository variable REAPER_ENABLED=true.
+# Skipped until the repository variable REAPER_ENABLED=true is set, after the first cloud run.
 name: reaper
 
 on:
@@ -21,5 +21,17 @@ jobs:
     if: vars.REAPER_ENABLED == 'true'
     runs-on: ubuntu-24.04
     environment: demo-reaper # no reviewer, main branch only; may assume the deploy role
+    env:
+      IMAGE: ghcr.io/alexbormotov/databricks-multi-region-booking-aws-dev
     steps:
-      - run: echo "implemented in the cloud slice" && exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Use the pinned image as the compose image
+        run: |
+          REF="$IMAGE:${{ hashFiles('.devcontainer/Dockerfile') }}"
+          docker pull -q "$REF" && docker tag "$REF" "$IMAGE:local"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: make reap

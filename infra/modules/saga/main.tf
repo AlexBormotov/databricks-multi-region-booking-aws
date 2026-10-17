@@ -6,7 +6,7 @@ locals {
   region = data.aws_region.this.region
   # The payment must finish before the hold expires; the margin covers Lambda start-up.
   payment_timeout_s = var.hold_ttl_s - 60
-  dsql_connect      = [{ Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }]
+  dsql_connect      = [{ Effect = "Allow", Action = "dsql:DbConnect", Resource = var.dsql_cluster_arn }]
   # Each function gets its own role; the simulated payment touches no database.
   functions = {
     pay     = { handler = "booking.handlers.saga.pay", timeout = local.payment_timeout_s, statements = [] }
@@ -65,6 +65,7 @@ resource "aws_lambda_function" "fn" {
   environment {
     variables = {
       DSQL_ENDPOINT        = var.dsql_endpoint
+      DSQL_ROLE            = "booking_app"
       PAYMENT_FAILURE_RATE = tostring(var.payment_failure_rate)
       PAYMENT_LATENCY_S    = tostring(var.payment_latency_s)
     }

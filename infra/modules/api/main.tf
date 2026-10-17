@@ -6,12 +6,13 @@ locals {
   region = data.aws_region.this.region
   environment = {
     DSQL_ENDPOINT     = var.dsql_endpoint
+    DSQL_ROLE         = "booking_app"
     STREAM_NAME       = var.stream_name
     STATE_MACHINE_ARN = var.state_machine_arn
     HOLD_TTL_S        = tostring(var.hold_ttl_s)
     KNOWLEDGE_BASE_ID = var.knowledge_base_id
   }
-  dsql_connect = { Effect = "Allow", Action = "dsql:DbConnectAdmin", Resource = var.dsql_cluster_arn }
+  dsql_connect = { Effect = "Allow", Action = "dsql:DbConnect", Resource = var.dsql_cluster_arn }
   put_events   = { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn }
   # Each function gets its own role with only what it calls.
   functions = {

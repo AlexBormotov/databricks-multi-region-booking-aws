@@ -1,0 +1,150 @@
+"""Session steps that `make up`, `make down` and the reaper run around Terragrunt.
+
+python -m ops.session expiry-set [--hours 2]   write the session expiry to SSM
+python -m ops.session due                      exit 0 if the session has expired
+python -m ops.session expiry-clear
+python -m ops.session prepare --seed 7 --scale small
+python -m ops.session empty-landing
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import boto3
+
+from booking import corpus
+from booking.db import create_pool, grant_app_role, migrate
+from booking.seed import seed
+
+HOME = "us-east-1"
+EXPIRY_PARAM = "/booking/session/expires_at"
+LIVE = Path(__file__).resolve().parents[1] / "infra" / "live" / "demo-prod"
+
+
+def set_expiry(ssm, now: datetime, hours: float) -> datetime:
+    expires_at = now + timedelta(hours=hours)
+    ssm.put_parameter(
+        Name=EXPIRY_PARAM, Value=expires_at.isoformat(), Type="String", Overwrite=True
+    )
+    return expires_at
+
+
+def due(ssm, now: datetime) -> bool:
+    """True once the stored expiry has passed; no stored expiry means no session to reap."""
+    try:
+        value = ssm.get_parameter(Name=EXPIRY_PARAM)["Parameter"]["Value"]
+    except ssm.exceptions.ParameterNotFound:
+        return False
+    return datetime.fromisoformat(value) <= now
+
+
+def clear_expiry(ssm) -> None:
+    try:
+        ssm.delete_parameter(Name=EXPIRY_PARAM)
+    except ssm.exceptions.ParameterNotFound:
+        pass
+
+
+def outputs(component: str) -> dict:
+    """A component's Terraform outputs; empty if it was never applied."""
+    raw = subprocess.run(
+        ["terragrunt", "output", "-json", "--non-interactive"],
+        cwd=LIVE / component,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return {name: o["value"] for name, o in json.loads(raw or "{}").items()}
+
+
+def empty_bucket(s3, bucket: str) -> int:
+    deleted = 0
+    for page in s3.get_paginator("list_object_versions").paginate(Bucket=bucket):
+        objects = [
+            {"Key": o["Key"], "VersionId": o["VersionId"]}
+            for o in page.get("Versions", []) + page.get("DeleteMarkers", [])
+        ]
+        if objects:
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
+            deleted += len(objects)
+    return deleted
+
+
+def prepare(seed_value: int, scale: str) -> None:
+    """Schema, reference data and the booking_app mapping in DSQL, then the search corpus."""
+    endpoints = outputs("us-east-1/dsql")["endpoints"]
+    db_roles = tuple(
+        arn
+        for component in ("us-east-1/api", "us-east-2/api", "us-east-1/saga", "us-east-2/saga")
+        for arn in outputs(component)["db_role_arns"]
+    )
+    # Schema and rows replicate between the peers; the role mapping is applied on each to be sure.
+    for region in (HOME, "us-east-2"):
+        os.environ["DSQL_ENDPOINT"] = endpoints[region]
+        os.environ.pop("DSQL_ROLE", None)
+        with create_pool(max_size=1) as pool:
+            if region == HOME:
+                print("migrations:", migrate(pool))
+                print("seed:", seed(pool, seed_value, scale))
+            grant_app_role(pool, db_roles)
+    ingest_corpus(seed_value, scale, outputs("us-east-1/search"))
+
+
+def ingest_corpus(seed_value: int, scale: str, search: dict, timeout_s: int = 900) -> None:
+    s3 = boto3.client("s3", region_name=HOME)
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus.write(Path(tmp), seed_value, scale)
+        for path in sorted(Path(tmp).rglob("*")):
+            if path.is_file():
+                s3.upload_file(str(path), search["corpus_bucket"], path.relative_to(tmp).as_posix())
+    agent = boto3.client("bedrock-agent", region_name=HOME)
+    ids = {"knowledgeBaseId": search["knowledge_base_id"], "dataSourceId": search["data_source_id"]}
+    job = agent.start_ingestion_job(**ids)["ingestionJob"]
+    deadline = time.monotonic() + timeout_s
+    while job["status"] not in ("COMPLETE", "FAILED", "STOPPED"):
+        if time.monotonic() > deadline:
+            sys.exit(f"ingestion job {job['ingestionJobId']} still {job['status']}")
+        time.sleep(10)
+        job = agent.get_ingestion_job(**ids, ingestionJobId=job["ingestionJobId"])["ingestionJob"]
+    print("ingestion:", job["status"], job.get("statistics"))
+    if job["status"] != "COMPLETE":
+        sys.exit(f"ingestion failed: {job.get('failureReasons')}")
+
+
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(prog="ops.session")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("expiry-set").add_argument("--hours", type=float, default=2.0)
+    commands.add_parser("due")
+    commands.add_parser("expiry-clear")
+    prep = commands.add_parser("prepare")
+    prep.add_argument("--seed", type=int, required=True)
+    prep.add_argument("--scale", required=True)
+    commands.add_parser("empty-landing")
+    args = parser.parse_args(argv)
+
+    ssm = boto3.client("ssm", region_name=HOME)
+    now = datetime.now(UTC)
+    if args.command == "expiry-set":
+        print("session expires at", set_expiry(ssm, now, args.hours).isoformat())
+    elif args.command == "due":
+        sys.exit(0 if due(ssm, now) else 1)
+    elif args.command == "expiry-clear":
+        clear_expiry(ssm)
+    elif args.command == "prepare":
+        prepare(args.seed, args.scale)
+    elif args.command == "empty-landing":
+        bucket = outputs("us-east-1/landing").get("bucket")
+        if bucket:
+            print("deleted", empty_bucket(boto3.client("s3", region_name=HOME), bucket), "objects")
+
+
+if __name__ == "__main__":
+    main()
