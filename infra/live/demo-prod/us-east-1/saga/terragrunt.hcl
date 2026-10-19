@@ -16,7 +16,7 @@ dependency "dsql" {
     endpoints    = { "us-east-1" = "mock.dsql.us-east-1.on.aws", "us-east-2" = "mock.dsql.us-east-2.on.aws" }
     cluster_arns = { "us-east-1" = "arn:aws:dsql:us-east-1:123456789012:cluster/mock", "us-east-2" = "arn:aws:dsql:us-east-2:123456789012:cluster/mock" }
   }
-  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
 }
 
 inputs = {

@@ -5,7 +5,7 @@ include "root" {
 
 locals {
   live = "${get_repo_root()}/infra/live/demo-prod"
-  mock = ["init", "validate", "plan"]
+  mock = ["init", "validate", "plan", "destroy"]
 }
 
 terraform {
