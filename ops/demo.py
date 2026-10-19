@@ -28,7 +28,7 @@ import boto3
 
 from booking import generator
 from booking.db import create_pool
-from ops.session import HOME, LIVE, outputs
+from ops.session import HOME, LIVE, bundle, outputs, statement
 
 ARTIFACTS = Path("artifacts")
 REPO = Path(__file__).resolve().parents[1]
@@ -38,6 +38,16 @@ K6_REGIONS = ("us-east-1", "us-east-2", "us-west-2")
 # The contested room-night lies after every stay the live traffic books.
 CONTESTED = (date(2027, 3, 1), date(2027, 3, 2))
 SEARCH_STAY = (date(2027, 2, 20), date(2027, 2, 22))
+# What the lakehouse step records from gold; tests/lakehouse runs the same queries on a fixture.
+GOLD_QUERIES = {
+    "by_region": "SELECT home_region, status, count(*) AS bookings FROM booking.gold.fact_booking "
+    "GROUP BY home_region, status ORDER BY home_region, status",
+    "conflict_rate_by_region": "SELECT * FROM booking.gold.conflict_rate_by_region "
+    "ORDER BY home_region",
+    "kpi_by_hotel": "SELECT hotel_id, sum(sold_room_nights) / sum(available_room_nights) "
+    "AS occupancy, round(sum(room_revenue_usd), 2) AS room_revenue_usd "
+    "FROM booking.gold.kpi_hotel_daily GROUP BY hotel_id ORDER BY hotel_id",
+}
 
 
 def contention(summaries: list[dict], attempts: int) -> dict:
@@ -156,6 +166,15 @@ def fill(api: str, rooms: list[dict], stay: tuple[date, date]) -> list[int]:
         }, {"idempotency-key": str(uuid.uuid4())})[0]
         for r in rooms
     ]  # fmt: skip
+
+
+def live_regions(keys: list[str]) -> set[str]:
+    """The regions with live events in the landing bucket; backfill files do not count."""
+    return {
+        key.split("/")[1].removeprefix("region=")
+        for key in keys
+        if key.startswith("events/region=") and "/dt=" in key
+    }
 
 
 def search_ids(api: str, q: str, stay: tuple[date, date]) -> tuple[int, list[str]]:
@@ -287,6 +306,30 @@ def mrsc(ctx) -> dict:
     return json.loads(out.read_text())
 
 
+def lakehouse(ctx, flush_timeout_s: int = 300) -> dict:
+    """Run 2 (plan D13): once Firehose has flushed both regions' live events, run booking-refresh
+    and wait for it. Its tasks are the checks: gold invariant, regions, CDC oracle."""
+    s3 = boto3.client("s3", region_name=HOME)
+    deadline, regions = time.monotonic() + flush_timeout_s, set()
+    while regions != set(generator.REGIONS) and time.monotonic() < deadline:
+        listing = s3.get_paginator("list_objects_v2")
+        pages = listing.paginate(Bucket=ctx["landing"], Prefix="events/")
+        regions = live_regions([o["Key"] for page in pages for o in page.get("Contents", [])])
+        if regions != set(generator.REGIONS):
+            time.sleep(15)
+    failures = []
+    if regions != set(generator.REGIONS):
+        failures.append(f"live events landed only from {sorted(regions)}")
+    run = bundle(["run", "booking_refresh", "--output", "json"], capture_output=True, text=True)
+    if run.returncode:
+        failures.append(f"booking-refresh failed: {run.stderr.strip()[-2000:]}")
+    gold = {name: statement(sql, ctx["warehouse_id"]) for name, sql in GOLD_QUERIES.items()}
+    if {r["home_region"] for r in gold["by_region"]} != set(generator.REGIONS):
+        failures.append("gold.fact_booking lacks a region")
+    return {"live_regions": sorted(regions), "run": run.stdout[-20000:], **gold,
+            "failures": failures}  # fmt: skip
+
+
 STEPS = {
     "backfill": backfill,
     "traffic": traffic,
@@ -308,6 +351,9 @@ def context(seed: int, scale: str) -> dict:
         "landing": outputs("us-east-1/landing")["bucket"],
         "dsql_endpoint": outputs("us-east-1/dsql")["endpoints"][HOME],
         "mrsc_table": outputs("us-east-1/mrsc")["table_name"],
+        "warehouse_id": outputs("us-east-1/databricks_uc").get("warehouse_id")
+        if os.environ.get("DATABRICKS_HOST")
+        else None,
     }
 
 
@@ -340,7 +386,9 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        summary = run(context(args.seed, args.scale))
+        ctx = context(args.seed, args.scale)
+        steps = STEPS | ({"lakehouse": lakehouse} if ctx["warehouse_id"] else {})
+        summary = run(ctx, steps)
         sys.exit(0 if all(s["passed"] for s in summary.values()) else 1)
     if args.command == "check-k6":
         result = contention([json.loads(p.read_text()) for p in args.summaries], args.attempts)

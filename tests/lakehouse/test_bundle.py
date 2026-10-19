@@ -13,6 +13,8 @@ import yaml
 from sql_harness import SQL, local
 from test_gold import gold  # noqa: F401  (fixture)
 
+from ops.demo import GOLD_QUERIES
+
 BUNDLE = SQL / "databricks.yml"
 
 
@@ -70,3 +72,9 @@ def test_dashboard_queries_run_on_gold(spark):
             [query] = item["widget"]["queries"]
             fields = {f["expression"].strip("`") for f in query["query"]["fields"]}
             assert fields <= columns[query["query"]["datasetName"]], item["widget"]["name"]
+
+
+@pytest.mark.usefixtures("gold")
+def test_demo_gold_queries_run_on_gold(spark):
+    for name, sql in GOLD_QUERIES.items():
+        assert spark.sql(local(sql)).count() > 0, name

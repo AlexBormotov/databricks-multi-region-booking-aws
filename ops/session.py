@@ -5,6 +5,9 @@ python -m ops.session due                      exit 0 if the session has expired
 python -m ops.session expiry-clear
 python -m ops.session prepare --seed 7 --scale small
 python -m ops.session empty-landing
+python -m ops.session deploy-bundle            the lakehouse bundle, run 2 only
+python -m ops.session destroy-bundle
+python -m ops.session validate-bundle
 """
 
 import argparse
@@ -26,6 +29,7 @@ from booking.seed import seed
 HOME = "us-east-1"
 EXPIRY_PARAM = "/booking/session/expires_at"
 LIVE = Path(__file__).resolve().parents[1] / "infra" / "live" / "demo-prod"
+BUNDLE = LIVE.parents[2] / "databricks"
 
 
 def set_expiry(ssm, now: datetime, hours: float) -> datetime:
@@ -118,6 +122,42 @@ def ingest_corpus(seed_value: int, scale: str, search: dict, timeout_s: int = 90
         sys.exit(f"ingestion failed: {job.get('failureReasons')}")
 
 
+def bundle(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+    """A `databricks bundle` command with the variables from the databricks_uc outputs."""
+    uc = outputs("us-east-1/databricks_uc")
+    variables = [f"--var={name}={uc[name]}" for name in ("landing_path", "warehouse_id")]
+    return subprocess.run(["databricks", "bundle", *command, *variables], cwd=BUNDLE, **kwargs)
+
+
+def statement(sql: str, warehouse_id: str, timeout_s: int = 600) -> list[dict]:
+    """Runs one SQL statement on the warehouse through the Statement Execution API."""
+
+    def api(*args: str) -> dict:
+        out = subprocess.run(
+            ["databricks", "api", *args], check=True, capture_output=True, text=True
+        ).stdout
+        return json.loads(out)
+
+    body = {"warehouse_id": warehouse_id, "statement": sql, "wait_timeout": "50s"}
+    response = api("post", "/api/2.0/sql/statements", "--json", json.dumps(body))
+    deadline = time.monotonic() + timeout_s
+    while response["status"]["state"] in ("PENDING", "RUNNING"):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"statement {response['statement_id']} still running")
+        time.sleep(5)
+        response = api("get", f"/api/2.0/sql/statements/{response['statement_id']}")
+    return rows(response)
+
+
+def rows(response: dict) -> list[dict]:
+    """The rows of a finished statement, as dicts by column name; raises if it failed."""
+    if response["status"]["state"] != "SUCCEEDED":
+        raise RuntimeError(f"statement {response['status']['state']}: {response['status']}")
+    columns = [c["name"] for c in response["manifest"]["schema"]["columns"]]
+    data = response["result"].get("data_array", [])
+    return [dict(zip(columns, row, strict=True)) for row in data]
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="ops.session")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -128,6 +168,9 @@ def main(argv=None) -> None:
     prep.add_argument("--seed", type=int, required=True)
     prep.add_argument("--scale", required=True)
     commands.add_parser("empty-landing")
+    commands.add_parser("deploy-bundle")
+    commands.add_parser("destroy-bundle")
+    commands.add_parser("validate-bundle")
     args = parser.parse_args(argv)
 
     ssm = boto3.client("ssm", region_name=HOME)
@@ -144,6 +187,12 @@ def main(argv=None) -> None:
         bucket = outputs("us-east-1/landing").get("bucket")
         if bucket:
             print("deleted", empty_bucket(boto3.client("s3", region_name=HOME), bucket), "objects")
+    elif args.command == "deploy-bundle":
+        bundle(["deploy"], check=True)
+    elif args.command == "destroy-bundle":
+        bundle(["destroy", "--auto-approve"], check=True)
+    elif args.command == "validate-bundle":
+        bundle(["validate"], check=True)
 
 
 if __name__ == "__main__":
