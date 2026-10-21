@@ -27,6 +27,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: demo-prod # required reviewer approves every run
     timeout-minutes: 120
+    # Empty until the trial exists; then `make` adds the Databricks unit, bundle and demo step.
+    env:
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin

@@ -20,13 +20,17 @@ else
 SCALE ?= small
 SEED ?= 7
 # Kept by `make down` (plan D11): free while idle, and the MRSC table may refuse deletion for 24 h.
-PERSISTENT := --filter '!./us-east-1/landing' --filter '!./us-east-1/mrsc'
+PERSISTENT := --filter '!./us-east-1/landing' --filter '!./us-east-1/mrsc' \
+	--filter '!./us-east-1/databricks_uc'
+# The Databricks unit needs a workspace (run 2); without DATABRICKS_HOST it is left out.
+NO_DATABRICKS := $(if $(DATABRICKS_HOST),,--filter '!./us-east-1/databricks_uc')
 
 .PHONY: help sync lint test test-integration security package plan plan-asl up demo down reap \
-	cost-report k6-local
+	cost-report k6-local destroy-persistent databricks-probe
 
 help:
 	@echo "targets: lint test test-integration security plan up demo down reap cost-report k6-local"
+	@echo "         destroy-persistent databricks-probe"
 
 sync:
 	uv sync --frozen
@@ -51,7 +55,7 @@ security: sync
 
 # Read-only: no state lock is taken, so the plan role needs no write access.
 plan: plan-asl package
-	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(NO_DATABRICKS) \
 		-- plan -lock=false -input=false
 
 # One zip for every function: the booking package plus its Linux wheels for Python 3.13.
@@ -78,9 +82,10 @@ plan-asl:
 # The expiry is written first, so the reaper also cleans up after an `up` that fails half-way.
 up: sync package
 	python -m ops.session expiry-set
-	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(NO_DATABRICKS) \
 		-- apply -input=false -auto-approve
 	python -m ops.session prepare --seed $(SEED) --scale $(SCALE)
+	$(if $(DATABRICKS_HOST),python -m ops.session deploy-bundle)
 
 # Destroying the functions reads the zip's hash, so `down` builds it too.
 down: sync package
@@ -88,6 +93,21 @@ down: sync package
 	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(PERSISTENT) \
 		-- destroy -input=false -auto-approve
 	python -m ops.session expiry-clear
+
+# Plan step 10: does the trial accept a storage credential on our bucket? Only persistent units.
+databricks-probe: sync
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+		--filter ./us-east-1/landing --filter ./us-east-1/databricks_uc \
+		-- apply -input=false -auto-approve
+	python -m ops.session validate-bundle
+
+# Plan 3.4: removes what `make down` keeps. Never run by CI. The landing bucket must be empty.
+destroy-persistent: sync
+	$(if $(DATABRICKS_HOST),python -m ops.session destroy-bundle)
+	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache \
+		--filter ./us-east-1/landing --filter ./us-east-1/mrsc \
+		$(if $(DATABRICKS_HOST),--filter ./us-east-1/databricks_uc) \
+		-- destroy -input=false -auto-approve
 
 reap: sync
 	if python -m ops.session due; then $(MAKE) down; else echo "no expired session"; fi

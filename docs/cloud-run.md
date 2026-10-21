@@ -49,6 +49,33 @@ workflow. The plan is `plan.md`; the budget alert at $12 and the reaper are the 
 same profile, or wait for the reaper. `make down` keeps the landing bucket and the MRSC table, which
 cost nothing while empty.
 
+`make destroy-persistent` removes what `make down` keeps: the landing bucket, the MRSC table and,
+with `DATABRICKS_HOST` set, the Unity Catalog objects and the bundle. CI never runs it.
+
 ## Run 2, with Databricks
 
-Added in slice C3: the trial signup, the service principal and the GitHub secrets.
+The trial lasts 14 days from signup, so sign up only once run 1 is green and every slice is merged
+(plan D9).
+
+1. **Trial.** At databricks.com/try-databricks, sign up with express setup on AWS, region
+   us-east-1. Note the workspace URL, `https://dbc-<id>.cloud.databricks.com`.
+2. **Service principal.** In the workspace: Settings, Identity and access, Service principals, Add.
+   Name it `booking-ci`. Then:
+   - add it to the `admins` group, so it can create the storage credential, the external location
+     and the catalog;
+   - on its Secrets tab, generate an OAuth secret, and copy the client ID and the secret.
+3. **GitHub.** Settings, Environments, `demo-prod`:
+   - variable `DATABRICKS_HOST`: the workspace URL;
+   - variable `DATABRICKS_CLIENT_ID`: the client ID;
+   - secret `DATABRICKS_CLIENT_SECRET`: the secret.
+4. **Probe**, locally, before the run: `make databricks-probe` with the three values exported in
+   the shell. It applies only the persistent `landing` and `databricks_uc` units, then runs
+   `databricks bundle validate` against the workspace. It checks that the trial accepts a storage
+   credential on our bucket (plan D10). Nothing it creates costs anything while idle. If the
+   external location is refused, stop: the volume fallback (plan D10) is written first.
+5. **Run 2.** Actions, `cloud-session`, scale `small`. With `DATABRICKS_HOST` set, `make up` also
+   applies `databricks_uc` and deploys the bundle, and `make demo` adds the `lakehouse` step: it
+   waits for Firehose, runs `booking-refresh` and records gold by region, conflict rates and KPIs.
+6. **Cost report**, the next day, with the three values exported: `make cost-report DATE=<date>`
+   adds the Databricks share from `system.billing.usage`. If the system tables are off, read the
+   day's usage from the account console instead.
