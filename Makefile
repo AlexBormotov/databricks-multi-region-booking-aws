@@ -19,6 +19,10 @@ else
 
 SCALE ?= small
 SEED ?= 7
+# SEARCH=off skips the corpus ingestion and the /search step, for an account whose Bedrock models
+# are blocked. The search infrastructure is applied either way.
+SEARCH ?= on
+NO_SEARCH := $(if $(filter off,$(SEARCH)),--no-search)
 # Kept by `make down` (plan D11): free while idle, and the MRSC table may refuse deletion for 24 h.
 PERSISTENT := --filter '!./us-east-1/landing' --filter '!./us-east-1/mrsc' \
 	--filter '!./us-east-1/databricks_uc'
@@ -84,7 +88,7 @@ up: sync package
 	python -m ops.session expiry-set
 	cd infra/live/demo-prod && terragrunt run --all --non-interactive --provider-cache $(NO_DATABRICKS) \
 		-- apply -input=false -auto-approve
-	python -m ops.session prepare --seed $(SEED) --scale $(SCALE)
+	python -m ops.session prepare --seed $(SEED) --scale $(SCALE) $(NO_SEARCH)
 	$(if $(DATABRICKS_HOST),python -m ops.session deploy-bundle)
 
 # Destroying the functions reads the zip's hash, so `down` builds it too.
@@ -129,7 +133,7 @@ k6-local: sync
 
 # Every step runs and writes artifacts/; the target fails if any step failed.
 demo: sync
-	python -m ops.demo run --seed $(SEED) --scale $(SCALE)
+	python -m ops.demo run --seed $(SEED) --scale $(SCALE) $(NO_SEARCH)
 
 # Cost Explorer lags by up to 24 h: run it the day after the session.
 cost-report: sync

@@ -3,7 +3,7 @@
 python -m ops.session expiry-set [--hours 2]   write the session expiry to SSM
 python -m ops.session due                      exit 0 if the session has expired
 python -m ops.session expiry-clear
-python -m ops.session prepare --seed 7 --scale small
+python -m ops.session prepare --seed 7 --scale small [--no-search]
 python -m ops.session empty-landing
 python -m ops.session deploy-bundle            the lakehouse bundle, run 2 only
 python -m ops.session destroy-bundle
@@ -80,10 +80,11 @@ def empty_bucket(s3, bucket: str) -> int:
     return deleted
 
 
-def prepare(seed_value: int, scale: str) -> None:
+def prepare(seed_value: int, scale: str, search: bool = True) -> None:
     """Reference rooms in the booking store (replicated to us-east-2), then the search corpus."""
     print("seed:", seed(Store(boto3.client("dynamodb", region_name=HOME)), seed_value, scale))
-    ingest_corpus(seed_value, scale, outputs("us-east-1/search"))
+    if search:
+        ingest_corpus(seed_value, scale, outputs("us-east-1/search"))
 
 
 def ingest_corpus(seed_value: int, scale: str, search: dict, timeout_s: int = 900) -> None:
@@ -152,6 +153,8 @@ def main(argv=None) -> None:
     prep = commands.add_parser("prepare")
     prep.add_argument("--seed", type=int, required=True)
     prep.add_argument("--scale", required=True)
+    # Bedrock models may be blocked on the account; then the corpus is not ingested.
+    prep.add_argument("--no-search", dest="search", action="store_false")
     commands.add_parser("empty-landing")
     commands.add_parser("deploy-bundle")
     commands.add_parser("destroy-bundle")
@@ -167,7 +170,7 @@ def main(argv=None) -> None:
     elif args.command == "expiry-clear":
         clear_expiry(ssm)
     elif args.command == "prepare":
-        prepare(args.seed, args.scale)
+        prepare(args.seed, args.scale, args.search)
     elif args.command == "empty-landing":
         bucket = outputs("us-east-1/landing").get("bucket")
         if bucket:
