@@ -1,89 +1,105 @@
 import uuid
 from datetime import timedelta
 
-from support import HOLD, REGION, T0, hold, scalar, stay, violations
+from support import HOLD, REGION, T0, booking, booking_events, count, hold, stay, violations
 
 from booking.saga import confirm, expire
-from booking.service import availability
+from booking.service import SKEW, availability
+
+LATE = T0 + HOLD + SKEW + timedelta(seconds=1)
 
 
-def held(pool, room):
-    return uuid.UUID(hold(pool, "key", stay(room)).body["booking_id"])
+def held(db, room):
+    return uuid.UUID(hold(db, "key", stay(room, length=2)).body["booking_id"])
 
 
-def events(pool, booking_id):
-    with pool.connection() as conn:
-        return [
-            row
-            for row in conn.execute(
-                "SELECT event_type, aggregate_version FROM outbox WHERE aggregate_id = %s"
-                " ORDER BY aggregate_version, event_type",
-                (booking_id,),
-            )
-        ]
-
-
-def test_payment_in_time_confirms(pool, room):
-    booking_id = held(pool, room)
-    response = confirm(pool, booking_id, region=REGION, clock=lambda: T0 + HOLD / 2)
+def test_payment_in_time_confirms(db, room):
+    booking_id = held(db, room)
+    response = confirm(db, booking_id, region=REGION, clock=lambda: T0 + HOLD / 2)
 
     assert response.status_code == 200
     assert response.body["status"] == "confirmed"
-    assert events(pool, booking_id) == [("BookingHeld", 1), ("BookingConfirmed", 2)]
+    assert booking_events(db, booking_id) == [("BookingHeld", 1), ("BookingConfirmed", 2)]
+    # The claims no longer expire, so a later booking cannot take them over.
+    assert all("expires_ms" not in c for c in db.scan("room-nights"))
+    assert hold(db, "other", stay(room), at=LATE).status_code == 409
     # A retried step changes nothing.
-    assert confirm(pool, booking_id, region=REGION, clock=lambda: T0 + HOLD).status_code == 200
-    assert len(events(pool, booking_id)) == 2
+    assert confirm(db, booking_id, region=REGION, clock=lambda: T0 + HOLD).status_code == 200
+    assert len(booking_events(db, booking_id)) == 2
 
 
-def test_payment_after_expiry(pool, room):
-    booking_id = held(pool, room)
+def test_payment_after_expiry(db, room):
+    booking_id = held(db, room)
     late = T0 + HOLD + timedelta(seconds=1)
-    response = confirm(pool, booking_id, region=REGION, clock=lambda: late)
+    response = confirm(db, booking_id, region=REGION, clock=lambda: late)
 
     assert response.status_code == 409
     assert response.body["status"] == "expired"
     assert response.body["refunded"] is True
-    assert events(pool, booking_id) == [
+    assert booking_events(db, booking_id) == [
         ("BookingHeld", 1),
         ("BookingExpired", 2),
         ("PaymentRefunded", 2),
     ]
+    assert count(db, "room-nights") == 0
     # A retried step refunds once.
-    confirm(pool, booking_id, region=REGION, clock=lambda: late)
-    assert len(events(pool, booking_id)) == 3
+    confirm(db, booking_id, region=REGION, clock=lambda: late)
+    assert len(booking_events(db, booking_id)) == 3
 
 
-def test_payment_after_takeover_is_refunded(pool, room):
-    booking_id = held(pool, room)
-    later = T0 + HOLD + timedelta(seconds=1)
-    assert hold(pool, "other", stay(room), at=later).status_code == 201
+def test_payment_after_takeover_is_refunded(db, room):
+    """The saga's clock lags: it still sees the hold as live, but another booking already took
+    a night over and expired the hold. The payment is refunded."""
+    booking_id = held(db, room)
+    assert hold(db, "other", stay(room), at=LATE).status_code == 201
+    assert booking(db, booking_id)["status"] == "expired"
 
-    assert confirm(pool, booking_id, region=REGION, clock=lambda: later).status_code == 409
-    assert ("PaymentRefunded", 2) in events(pool, booking_id)
-    assert violations(pool) == []
+    response = confirm(db, booking_id, region=REGION, clock=lambda: T0 + HOLD / 2)
+    assert response.status_code == 409
+    assert ("PaymentRefunded", 2) in booking_events(db, booking_id)
+    assert violations(db, LATE) == []
 
 
-def test_timeout_expires_and_releases(pool, room):
-    booking_id = held(pool, room)
-    response = expire(pool, booking_id, region=REGION, clock=lambda: T0 + HOLD)
+def test_lost_claim_on_a_pending_booking_expires_it(db, room):
+    """Same race, but the takeover's best-effort expiry did not happen: the claim check alone
+    stops the confirmation."""
+    booking_id = held(db, room)
+    other = hold(db, "other", stay(room), at=LATE)
+    db.client.update_item(
+        TableName=db.name("bookings"),
+        Key={"booking_id": {"S": str(booking_id)}},
+        UpdateExpression="SET #s = :p, #v = :one",
+        ExpressionAttributeNames={"#s": "status", "#v": "version"},
+        ExpressionAttributeValues={":p": {"S": "pending"}, ":one": {"N": "1"}},
+    )
+
+    assert confirm(db, booking_id, region=REGION, clock=lambda: T0 + HOLD / 2).status_code == 409
+    assert booking(db, booking_id)["status"] == "expired"
+    # The night the other booking took over is still its own.
+    assert {c["booking_id"] for c in db.scan("room-nights")} == {other.body["booking_id"]}
+
+
+def test_timeout_expires_and_releases(db, room):
+    booking_id = held(db, room)
+    response = expire(db, booking_id, region=REGION, clock=lambda: T0 + HOLD)
 
     assert response.body["status"] == "expired"
-    assert scalar(pool, "SELECT count(*) FROM room_night") == 0
+    assert count(db, "room-nights") == 0
     hotel_id, room_id = room
     req = stay(room)
-    assert availability(pool, hotel_id, req.check_in, req.check_out) == [room_id]
+    assert availability(db, hotel_id, req.check_in, req.check_out) == [room_id]
 
 
-def test_timeout_after_confirm_changes_nothing(pool, room):
-    booking_id = held(pool, room)
-    confirm(pool, booking_id, region=REGION, clock=lambda: T0)
+def test_timeout_after_confirm_changes_nothing(db, room):
+    booking_id = held(db, room)
+    confirm(db, booking_id, region=REGION, clock=lambda: T0)
 
-    assert expire(pool, booking_id, region=REGION, clock=lambda: T0 + HOLD).body["status"] == (
+    assert expire(db, booking_id, region=REGION, clock=lambda: T0 + HOLD).body["status"] == (
         "confirmed"
     )
-    assert len(events(pool, booking_id)) == 2
+    assert len(booking_events(db, booking_id)) == 2
 
 
-def test_unknown_booking(pool):
-    assert confirm(pool, uuid.uuid4(), region=REGION).status_code == 404
-    assert expire(pool, uuid.uuid4(), region=REGION).status_code == 404
+def test_unknown_booking(db):
+    assert confirm(db, uuid.uuid4(), region=REGION).status_code == 404
+    assert expire(db, uuid.uuid4(), region=REGION).status_code == 404

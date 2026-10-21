@@ -17,10 +17,12 @@ def pay(event, context):
 
 
 def confirm(event, context):
-    response = saga.confirm(runtime.pool(), uuid.UUID(event["booking_id"]), region=runtime.region())
+    response = saga.confirm(
+        runtime.store(), uuid.UUID(event["booking_id"]), region=runtime.region()
+    )
     return {"status_code": response.status_code, "body": response.body}
 
 
 def expire(event, context):
-    response = saga.expire(runtime.pool(), uuid.UUID(event["booking_id"]), region=runtime.region())
+    response = saga.expire(runtime.store(), uuid.UUID(event["booking_id"]), region=runtime.region())
     return {"status_code": response.status_code, "body": response.body}

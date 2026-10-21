@@ -9,22 +9,23 @@ bookings under concurrent cross-region writes, plus a Databricks lakehouse for o
 analytics and a semantic hotel search. `TASK.md` is the source brief and wins over any
 summary here.
 
-Two halves, joined by an outbox:
+Two halves, joined by a change stream:
 
-- **Transactional.** API Gateway + Lambda in two regions over Aurora DSQL multi-region (two active
-  regions plus a witness). Double-booking defence: optimistic concurrency with retry (backoff +
-  jitter), idempotency keys, a hold with TTL (`pending` -> `confirmed` / `expired`) driven as a saga
-  in Step Functions with a simulated payment. DynamoDB Global Tables (strong consistency,
-  conditional writes) is the documented alternative.
-- **Analytical.** Outbox table -> Kinesis -> Firehose -> S3 -> Databricks Auto Loader -> Lakeflow
+- **Transactional.** API Gateway + Lambda in two regions over DynamoDB global tables with
+  multi-region strong consistency (two active regions plus a witness). Aurora DSQL, the brief's
+  first choice, could not be created on the account (ADR 2). Double-booking defence: one
+  conditional write per room-night with retry (backoff + jitter), idempotency keys, a hold with TTL
+  (`pending` -> `confirmed` / `expired`) driven as a saga in Step Functions with a simulated
+  payment.
+- **Analytical.** DynamoDB Streams -> Kinesis -> Firehose -> S3 -> Databricks Auto Loader -> Lakeflow
   Declarative Pipelines (medallion, AUTO CDC, expectations) -> Unity Catalog -> Databricks SQL
   dashboards. Exactly-once into Delta is `MERGE` on `event_id`. Lakeflow Jobs orchestrate the
   warehouse.
 - **Vector search.** Bedrock Knowledge Base on S3 Vectors over hotel descriptions and reviews,
-  filtered by live availability from DSQL. OpenSearch Serverless is excluded on cost.
+  filtered by live availability from the booking store. OpenSearch Serverless is excluded on cost.
 
 The proof is a load test: k6 on EC2 spot in three regions sends 1000 concurrent attempts for one
-room-night; exactly one succeeds, and an invariant query run afterwards confirms it.
+room-night; exactly one succeeds, and an invariant check run afterwards confirms it.
 
 ## Contract with the operator
 

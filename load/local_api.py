@@ -1,9 +1,10 @@
 """The API handler behind a local HTTP server, so k6 can run the contention scenario before any
-cloud spend (`make k6-local`). PostgreSQL stands in for DSQL, moto for Kinesis and Step Functions.
+cloud spend (`make k6-local`). DynamoDB Local stands in for the MRSC tables, moto for Kinesis and
+Step Functions.
 
     python load/local_api.py --port 8080 --room-file /tmp/room.json
 
-It recreates the database `k6_local`, migrates and seeds it, and writes the contested room to
+It creates the booking tables under a fresh prefix, seeds them, and writes the contested room to
 `--room-file` before it starts serving.
 """
 
@@ -16,30 +17,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
 
 import boto3
-import psycopg
-from psycopg import sql
-from psycopg.conninfo import make_conninfo
+from botocore.config import Config
 
-from booking.db import create_pool, migrate
 from booking.handlers import api, runtime
 from booking.seed import seed
+from booking.store import Store, create_tables
 
-DATABASE = "k6_local"
 # DynamoDB Local keeps one database per access key; these match the integration tests'.
 FAKE_AWS = {
     "region_name": "us-east-1",
     "aws_access_key_id": "testing",
     "aws_secret_access_key": "testing",
 }
-
-
-def fresh_database() -> str:
-    admin_url = os.environ["DATABASE_URL"]
-    with psycopg.connect(admin_url, autocommit=True) as admin:
-        name = sql.Identifier(DATABASE)
-        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(name))
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(name))
-    return make_conninfo(admin_url, dbname=DATABASE)
 
 
 def fake_aws() -> dict[str, str]:
@@ -108,20 +97,20 @@ def main() -> None:
     parser.add_argument("--room-file", required=True)
     args = parser.parse_args()
 
-    os.environ["DATABASE_URL"] = fresh_database()
     os.environ.update(fake_aws())
-    with create_pool(max_size=1) as admin:
-        migrate(admin)
-        seed(admin, 7, "small")
-        with admin.connection() as conn:
-            hotel_id, room_id = conn.execute(
-                "SELECT hotel_id, room_id FROM rooms ORDER BY room_id LIMIT 1"
-            ).fetchone()
-    # Every connection open before the first request, as each Lambda container holds its own;
-    # a pool that grows on demand would queue the first wave and hide the race.
-    pool = create_pool(min_size=50, max_size=50)
-    pool.open(wait=True)
-    runtime.pool = lambda: pool
+    # A connection per concurrent request, as each Lambda container holds its own.
+    client = boto3.client(
+        "dynamodb",
+        endpoint_url=os.environ["DYNAMODB_ENDPOINT_URL"],
+        config=Config(max_pool_connections=200),
+        **FAKE_AWS,
+    )
+    store = Store(client, f"k6{uuid.uuid4().hex[:8]}")
+    create_tables(store)
+    seed(store, 7, "small")
+    first = min(store.scan("rooms"), key=lambda r: r["room_id"])
+    hotel_id, room_id = first["hotel_id"], first["room_id"]
+    runtime.store = lambda: store
     server = Server(("127.0.0.1", args.port), Handler)
     # Written once the port is bound: the file's existence is the "ready" signal.
     with open(args.room_file, "w") as f:

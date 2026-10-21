@@ -1,6 +1,6 @@
 // Contention proof: every VU tries once, at the same moment, to book the same room-night.
 // One runner per region (EC2 spot); together they send 1000 attempts and exactly one may win.
-// The invariant query (sql/invariant.sql) is run afterwards against DSQL.
+// The invariant check (booking.store.violations) is run afterwards.
 //
 //   k6 run -e API_URL=https://... -e HOTEL_ID=... -e ROOM_ID=... -e CHECK_IN=2027-01-10 \
 //          -e ATTEMPTS=334 -e RUNNER=us-west-2 loadtest/contention.js

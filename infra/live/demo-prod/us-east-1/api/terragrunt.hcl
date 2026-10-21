@@ -12,11 +12,11 @@ terraform {
   source = "${get_repo_root()}/infra/modules//api"
 }
 
-dependency "dsql" {
-  config_path = "${local.live}/us-east-1/dsql"
+dependency "store" {
+  config_path = "${local.live}/us-east-1/store"
   mock_outputs = {
-    endpoints    = { "us-east-1" = "mock.dsql.us-east-1.on.aws", "us-east-2" = "mock.dsql.us-east-2.on.aws" }
-    cluster_arns = { "us-east-1" = "arn:aws:dsql:us-east-1:123456789012:cluster/mock", "us-east-2" = "arn:aws:dsql:us-east-2:123456789012:cluster/mock" }
+    table_names = ["booking-rooms", "booking-room-nights", "booking-bookings", "booking-idempotency"]
+    stream_arn  = "arn:aws:dynamodb:us-east-1:123456789012:table/booking-bookings/stream/mock"
   }
   mock_outputs_allowed_terraform_commands = local.mock
 }
@@ -60,8 +60,9 @@ dependency "search" {
 }
 
 inputs = {
-  dsql_endpoint      = dependency.dsql.outputs.endpoints[local.region]
-  dsql_cluster_arn   = dependency.dsql.outputs.cluster_arns[local.region]
+  store_tables = dependency.store.outputs.table_names
+  # Only us-east-1 has the bookings stream, so only it runs the events function.
+  store_stream_arn   = local.region == "us-east-1" ? dependency.store.outputs.stream_arn : null
   stream_name        = dependency.stream.outputs.stream_name
   stream_arn         = dependency.stream.outputs.stream_arn
   state_machine_arn  = dependency.saga.outputs.state_machine_arn

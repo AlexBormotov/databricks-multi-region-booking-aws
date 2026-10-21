@@ -212,3 +212,132 @@ Work stops and this plan returns for approval in any of these cases:
 - a negative control fails to go red;
 - the trial probe refuses the storage credential;
 - either run costs more than $7.
+
+## 9. Amendment A: the booking store on DynamoDB MRSC
+
+Status: approved by the owner on 2026-10-21. Replaces Aurora DSQL with ADR 1's "Version 2" (ADR 2). Section 1's
+DSQL row, D12 and the DSQL parts of 3.1 and 3.3 no longer apply.
+
+### 9.1 Facts (checked 2026-10-21 on the account)
+
+| Fact | Source | Consequence |
+|---|---|---|
+| `dsql create-cluster` fails in us-east-1 and us-east-2 with `ValidationException ... Contact AWS Support` | CLI probe; run 1 | DSQL is out until support answers |
+| An MRSC table with a GSI and a stream takes about 70 s to create | probe table `booking-probe-mrsc` | the tables are session resources |
+| The stream exists only in us-east-1, where the table was created, and it carries the writes made in both regions | the probe wrote one item in each region and read both from the us-east-1 stream | one event Lambda in us-east-1 |
+| Deleting an MRSC table fails while the replica exists. After the replica and the witness are removed (about 60 s), the delete succeeds at once; there is no 24 h block | probe | `make down` destroys the tables; D11 keeps only the spike table |
+
+### 9.2 Decisions
+
+**D15. Tables.** Four on-demand MRSC tables, created by `make up` and destroyed by `make down`:
+
+| Table | Key | Attributes |
+|---|---|---|
+| `booking-rooms` | `hotel_id`, `room_id` | `room_type`, `base_rate_minor`, `currency` (the hotel's, copied) |
+| `booking-room-nights` | `room_night` = `<room_id>#<night>` | `booking_id`, `expires_ms` (absent once confirmed) |
+| `booking-bookings` | `booking_id` | today's booking fields, plus `refunded` and `changed_in`; stream `NEW_AND_OLD_IMAGES` |
+| `booking-idempotency` | `idem_key` | `request_hash`, `state` (`in_progress` or `done`), `started_ms`, `status_code`, `response` |
+
+Times are epoch milliseconds, because conditions compare them. Hotels have no table: the booking
+path needs only a room's rate and currency. The corpus and the lakehouse already carry hotels.
+
+**D16. Booking protocol** (replaces spec 2.1):
+
+1. Take the key: put the idempotency item with
+   `attribute_not_exists(idem_key) OR (state = in_progress AND started_ms < :now - LEASE)`.
+   - If the key is `done` with the same hash, return the stored response.
+   - If the key is `done` with a different hash, return `422`.
+   - If the key is `in_progress`, return `409` with `Retry-After`.
+2. Read the room. If it is unknown, return `404` and delete the key.
+3. Claim the nights in date order. The condition is
+   `attribute_not_exists(room_night) OR expires_ms < :now - SKEW`.
+   - On a failed condition, release the nights already taken, conditioned on `booking_id`.
+   - Return `409` and delete the key, so a retry is evaluated again.
+4. Put the booking: `pending`, `version = 1`, `expires_ms = now + HOLD_TTL`. Store `201` in the key
+   and start the saga.
+
+A takeover of a stale hold also moves that hold's booking to `expired`, if it is still `pending`.
+This is best effort; the saga's expire step does the same.
+
+`ReplicatedWriteConflictException` is MRSC's write-write conflict. It is retried with backoff and
+full jitter, at most 5 attempts, then the request returns `503`. `SKEW` is 5 s and `LEASE` is 30 s.
+
+**D17. Saga.**
+
+*Confirm.*
+1. Remove `expires_ms` from each claim, conditioned on `booking_id`. A claim lost to a takeover means
+   the hold had expired.
+2. Update the booking to `confirmed`, conditioned on `status = pending AND expires_ms > :now`.
+
+Claims are made permanent before the booking is confirmed. A crash between the two steps therefore
+leaves a room blocked, never sold twice. If step 2 fails, the booking is expired, its claims are
+released, and `refunded` is set.
+
+*Expire and cancel.* Update the booking first, then release its claims.
+
+**D18. Events.** A Lambda in us-east-1 reads the `bookings` stream and puts envelopes to Kinesis.
+The envelope is the one in spec 3.
+- **Event type.** An insert is `BookingHeld`. A status change is `BookingConfirmed`,
+  `BookingExpired` or `BookingCancelled`. `refunded` becoming true is `PaymentRefunded`.
+- **Event id.** `uuid5(booking_id, version, type)`. A redelivered stream record then has the same
+  id, and the lakehouse drops it with `MERGE` on `event_id`.
+- **Fields.** `home_region` is the item's `changed_in`, and `occurred_at` is its `updated_ms`.
+
+The outbox table, the poller and its EventBridge rule are removed. The lakehouse is unchanged.
+
+**D19. What leaves the stack.**
+- PostgreSQL: the compose service and the CI service.
+- `psycopg`, `psycopg-pool` and the DSQL connector.
+- `migrations/`, `db.py`, `outbox.py`, `sql/invariant.sql`.
+- The `booking_app` role (D12).
+
+The invariant becomes `booking.store.violations`. It does a strongly consistent scan of `bookings`
+only and pairs live bookings of the same room whose stays overlap. The DynamoDB Local container
+replaces PostgreSQL for every local check.
+
+### 9.3 Checks that go red
+
+| Claim | Check |
+|---|---|
+| one winner per room-night | `test_concurrent_same_room_night`: 1000 concurrent bookings against DynamoDB Local give one `201`. Negative control: drop the claim condition, and more than one `201` appears |
+| a losing multi-night booking keeps nothing | `test_multi_night_loser_releases` |
+| an expired hold is taken over, a live one is not | `test_stale_hold_takeover`, with the skew boundary |
+| a payment after expiry is refunded, not confirmed | `test_payment_after_expiry`: the booking is `expired` and `PaymentRefunded` is emitted |
+| replay and key reuse | `test_idempotent_replay`, `test_key_reused_with_other_request` |
+| events match the contract and repeat with the same id | `test_events_from_stream`: the DynamoDB Local stream goes to the handler and then to moto Kinesis |
+| the invariant goes red | `test_invariant_flags_overlap` on two hand-written overlapping bookings |
+| k6 before paying | `make k6-local` against DynamoDB Local: one `201` |
+
+The search, saga, handler, seed and demo-step tests move from PostgreSQL to DynamoDB Local.
+
+### 9.4 Files
+
+```
+src/booking/store.py                     tables, claims, retry, violations (replaces db.py)
+src/booking/service.py, saga.py, search.py, seed.py, domain.py
+src/booking/events.py                    stream record -> envelope (replaces outbox.py)
+src/booking/handlers/api.py, saga.py, runtime.py, events.py (replaces poller.py)
+src/booking/migrations/, src/booking/db.py, src/booking/outbox.py, sql/invariant.sql   removed
+infra/modules/store/                     the four MRSC tables (replaces infra/modules/dsql)
+infra/modules/api/, infra/modules/saga/  DynamoDB permissions; the events function in us-east-1
+infra/live/demo-prod/...                 store unit instead of dsql; api and saga dependencies
+ops/session.py, ops/demo.py              seed and invariant on DynamoDB
+load/local_api.py                        over DynamoDB Local
+spike/dynamodb/claims.py                 kept for the MRSC race script
+pyproject.toml, uv.lock, docker-compose.yml, .github/workflows/ci.yml   PostgreSQL removed
+tests/integration/...                    rewritten on DynamoDB Local; app-role and migration tests removed
+docs/adr/0001, 0002; spec.md 2, 3, 4, 6, 7, 8, 10, 11; AGENTS.md; docs/cloud-run.md
+```
+
+`TASK.md` is the owner's brief and is not edited. It already names DynamoDB as the alternative.
+
+### 9.5 Steps
+
+**Slice C4.** One PR, after PR #10.
+1. Store, service, saga and events. Check: the tests in 9.3, with the negative control.
+2. Infra. Check: `make plan` green, with the resource counts in the PR.
+3. Ops, k6-local and docs. Check: `make k6-local` gives one `201`, `make test` and
+   `make test-integration` are green.
+
+Then run 1 with the pass conditions of section 5. "The invariant query returns zero rows" now means
+`violations` returns nothing.

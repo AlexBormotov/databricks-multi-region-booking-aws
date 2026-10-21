@@ -1,13 +1,12 @@
-"""Semantic hotel search: the knowledge base ranks hotels for the query, DSQL keeps those with a
-free room for the stay."""
+"""Semantic hotel search: the knowledge base ranks hotels for the query, the booking store keeps
+those with a free room for the stay."""
 
 import uuid
 from datetime import date
 
-from psycopg_pool import ConnectionPool
-
 from booking.domain import nights
 from booking.service import Clock, availability, utc_now
+from booking.store import Store
 
 # The knowledge base lives in us-east-1 only; the us-east-2 functions call it cross-region.
 KB_REGION = "us-east-1"
@@ -26,7 +25,7 @@ def retrieve(client, kb_id: str, q: str, k: int = TOP_K) -> list[dict]:
 
 
 def search(
-    pool: ConnectionPool,
+    store: Store,
     client,
     kb_id: str,
     q: str,
@@ -41,8 +40,8 @@ def search(
     nights(check_in, check_out)
     found = []
     for hotel in retrieve(client, kb_id, q):
-        # A hotel in the corpus but not in DSQL has no rooms, so it drops out here too.
-        rooms = availability(pool, uuid.UUID(hotel["hotel_id"]), check_in, check_out, clock=clock)
+        # A hotel in the corpus but not in the store has no rooms, so it drops out here too.
+        rooms = availability(store, uuid.UUID(hotel["hotel_id"]), check_in, check_out, clock=clock)
         if rooms:
             found.append({**hotel, "free_rooms": len(rooms)})
     return found

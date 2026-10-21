@@ -112,7 +112,7 @@ destroy-persistent: sync
 reap: sync
 	if python -m ops.session due; then $(MAKE) down; else echo "no expired session"; fi
 
-# The contention scenario against the API handler on PostgreSQL, before any cloud spend.
+# The contention scenario against the API handler on DynamoDB Local, before any cloud spend.
 K6_ATTEMPTS ?= 1000
 k6-local: sync
 	mkdir -p artifacts

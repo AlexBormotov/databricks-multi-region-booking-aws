@@ -1,30 +1,28 @@
-"""Booking transactions under optimistic concurrency: of concurrent claims on one room-night, the
-first to commit wins and every other one gets 409.
+"""Bookings on DynamoDB (ADR 2, plan D16). Each night of a stay is one claim item, taken with a
+conditional write: of concurrent claims on one room-night exactly one succeeds, and every other
+booking gets 409.
 """
 
 import hashlib
 import json
-import random
-import time
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-import psycopg
-from psycopg import Cursor
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from botocore.exceptions import ClientError
 
-from booking.domain import IllegalTransition, Status, is_live, nights, transition, uuid7
-from booking.outbox import insert_event
+from booking.domain import IllegalTransition, Status, nights, transition, uuid7
+from booking.store import MAX_ATTEMPTS, Busy, Store, condition_failed, dump
 
-MAX_ATTEMPTS = 5
-BACKOFF_BASE_S = 0.02
-BACKOFF_CAP_S = 1.0
-# 40001 is DSQL's OCC conflict at commit (OC000, or OC001 for a schema change) and PostgreSQL's
-# serialization failure; 23505 is how PostgreSQL reports a second insert of the same room-night.
-RETRYABLE = {"40001", "23505", "OC000", "OC001"}
+log = logging.getLogger(__name__)
+
+# A hold is taken over only this long after it expired, so the holder's saga, on a clock that is
+# behind, can no longer confirm it.
+SKEW = timedelta(seconds=5)
+# An idempotency key left in progress by a crashed request is free again after this.
+LEASE = timedelta(seconds=30)
 
 BOOKING_FIELDS = (
     "booking_id",
@@ -42,13 +40,26 @@ BOOKING_FIELDS = (
     "created_at",
     "updated_at",
 )
-BOOKING_COLUMNS = ", ".join(BOOKING_FIELDS)
+# The response and event fields kept as epoch milliseconds in the store.
+TIME_FIELDS = {"expires_at": "expires_ms", "created_at": "created_ms", "updated_at": "updated_ms"}
 
 Clock = Callable[[], datetime]
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def ms(at: datetime) -> int:
+    return round(at.timestamp() * 1000)
+
+
+def ms_of(span: timedelta) -> int:
+    return round(span.total_seconds() * 1000)
+
+
+def iso(at_ms: int) -> str:
+    return datetime.fromtimestamp(at_ms / 1000, UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -71,225 +82,312 @@ class Response:
     headers: dict = field(default_factory=dict)
 
 
-class Abort(Exception):
-    """Ends a transaction with a final response, rolling it back; never retried."""
-
-    def __init__(self, status_code: int, error: str):
-        self.response = Response(status_code, {"error": error})
-
-
-def run_transaction(
-    pool: ConnectionPool,
-    work: Callable[[Cursor], Response],
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-    rng: Callable[[], float] = random.random,
-) -> Response:
-    """Run work in one transaction; retry conflicts with exponential backoff and full jitter."""
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            with pool.connection() as conn, conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    return work(cur)
-        except Abort as stop:
-            return stop.response
-        except psycopg.Error as err:
-            if err.sqlstate not in RETRYABLE:
-                raise
-            if attempt < MAX_ATTEMPTS - 1:
-                sleep(rng() * min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**attempt))
-    return Response(503, {"error": "too much contention, retry later"}, {"Retry-After": "1"})
+BUSY = Response(503, {"error": "too much contention, retry later"}, {"Retry-After": "1"})
 
 
 def snapshot(booking: dict) -> dict:
     """The booking as JSON: the response body and every event payload."""
     return {
-        k: v.isoformat() if isinstance(v, date) else str(v) if isinstance(v, uuid.UUID) else v
-        for k, v in booking.items()
+        f: iso(booking[TIME_FIELDS[f]]) if f in TIME_FIELDS else booking[f] for f in BOOKING_FIELDS
     }
 
 
-def release_claims(cur: Cursor, booking: dict) -> None:
-    """Delete the booking's room-night claims by primary key."""
-    cur.executemany(
-        "DELETE FROM room_night WHERE hotel_id = %s AND room_id = %s AND night = %s"
-        " AND booking_id = %s",
-        [
-            (booking["hotel_id"], booking["room_id"], night, booking["booking_id"])
-            for night in nights(booking["check_in"], booking["check_out"])
-        ],
-    )
+def claim_key(room_id: str, night: date) -> dict:
+    return {"room_night": f"{room_id}#{night.isoformat()}"}
+
+
+def stay_of(booking: dict) -> list[date]:
+    return nights(date.fromisoformat(booking["check_in"]), date.fromisoformat(booking["check_out"]))
+
+
+def release(store: Store, booking_id: str, room_id: str, stay: list[date]) -> None:
+    """Delete the claims this booking holds; a night another booking holds is left alone."""
+    for night in stay:
+        try:
+            store.call(
+                "delete_item",
+                "room-nights",
+                Key=dump(claim_key(room_id, night)),
+                ConditionExpression="booking_id = :b",
+                ExpressionAttributeValues=dump({":b": booking_id}),
+            )
+        except ClientError as err:
+            if not condition_failed(err):
+                raise
 
 
 def change_status(
-    cur: Cursor, booking: dict, target: Status, event_type: str, *, region: str, at: datetime
+    store: Store,
+    booking: dict,
+    target: Status,
+    *,
+    region: str,
+    at_ms: int,
+    guard: str = "",
+    guard_values: dict | None = None,
 ) -> dict:
-    """Move a booking to target, release its claims unless confirmed, and write the event."""
+    """Move a booking to target if nobody changed it since it was read, then release its claims
+    unless it is now confirmed. A failed condition raises ClientError: read it again."""
     transition(Status(booking["status"]), target)
     updated = {
         **booking,
         "status": target.value,
         "version": booking["version"] + 1,
-        "updated_at": at,
+        "updated_ms": at_ms,
+        "changed_in": region,
     }
-    cur.execute(
-        "UPDATE bookings SET status = %s, version = %s, updated_at = %s WHERE booking_id = %s",
-        (updated["status"], updated["version"], at, booking["booking_id"]),
+    store.call(
+        "update_item",
+        "bookings",
+        Key=dump({"booking_id": booking["booking_id"]}),
+        UpdateExpression="SET #status = :status, #version = :version, updated_ms = :at,"
+        " changed_in = :region",
+        ConditionExpression="#version = :read" + (f" AND {guard}" if guard else ""),
+        ExpressionAttributeNames={"#status": "status", "#version": "version"},
+        ExpressionAttributeValues=dump(
+            {
+                ":status": target.value,
+                ":version": updated["version"],
+                ":at": at_ms,
+                ":region": region,
+                ":read": booking["version"],
+                **(guard_values or {}),
+            }
+        ),
     )
     if target != Status.CONFIRMED:
-        release_claims(cur, booking)
-    insert_event(
-        cur,
-        aggregate_id=booking["booking_id"],
-        aggregate_version=updated["version"],
-        event_type=event_type,
-        payload=snapshot(updated),
-        home_region=region,
-        occurred_at=at,
-    )
+        release(store, booking["booking_id"], booking["room_id"], stay_of(booking))
     return updated
 
 
+def with_booking(
+    store: Store, booking_id: uuid.UUID, decide: Callable[[dict], Response]
+) -> Response:
+    """Read the booking and decide on it; when a conditional write finds the booking changed,
+    read it again. 404 if it does not exist, 503 when it keeps changing."""
+    for _ in range(MAX_ATTEMPTS):
+        booking = store.get("bookings", {"booking_id": str(booking_id)})
+        if booking is None:
+            return Response(404, {"error": "unknown booking"})
+        try:
+            return decide(booking)
+        except ClientError as err:
+            if not condition_failed(err):
+                raise
+        except Busy:
+            return BUSY
+    return BUSY
+
+
+def _take_key(store: Store, idem_key: str, request_hash: str, now: int) -> Response | None:
+    """None if this request now owns the key; otherwise the answer for a key already used."""
+    try:
+        store.call(
+            "put_item",
+            "idempotency",
+            Item=dump(
+                {
+                    "idem_key": idem_key,
+                    "request_hash": request_hash,
+                    "state": "in_progress",
+                    "started_ms": now,
+                }
+            ),
+            ConditionExpression="attribute_not_exists(idem_key)"
+            " OR (#state = :in_progress AND started_ms < :lease_end)",
+            ExpressionAttributeNames={"#state": "state"},
+            ExpressionAttributeValues=dump(
+                {":in_progress": "in_progress", ":lease_end": now - ms_of(LEASE)}
+            ),
+        )
+        return None
+    except ClientError as err:
+        if not condition_failed(err):
+            raise
+    seen = store.get("idempotency", {"idem_key": idem_key})
+    if seen and seen["request_hash"] != request_hash:
+        return Response(422, {"error": "Idempotency-Key was used with a different request"})
+    if seen and seen["state"] == "done":
+        return Response(200, json.loads(seen["response"]))
+    return Response(
+        409, {"error": "a request with this Idempotency-Key is in progress"}, {"Retry-After": "1"}
+    )
+
+
+def _drop_key(store: Store, idem_key: str, request_hash: str) -> None:
+    """Free the key after an answer that is not kept, so a retry is evaluated again."""
+    try:
+        store.call(
+            "delete_item",
+            "idempotency",
+            Key=dump({"idem_key": idem_key}),
+            ConditionExpression="request_hash = :h AND #state = :in_progress",
+            ExpressionAttributeNames={"#state": "state"},
+            ExpressionAttributeValues=dump({":h": request_hash, ":in_progress": "in_progress"}),
+        )
+    except (ClientError, Busy):
+        log.warning("could not free Idempotency-Key %s; its lease frees it", idem_key)
+
+
+def _expire_stale(store: Store, booking_id: str, *, region: str, now: int) -> None:
+    """A taken-over hold's booking becomes expired. Best effort: the saga's expire step does the
+    same, and the invariant does not depend on it."""
+    try:
+        booking = store.get("bookings", {"booking_id": booking_id})
+        if booking and booking["status"] == Status.PENDING and booking["expires_ms"] < now:
+            change_status(store, booking, Status.EXPIRED, region=region, at_ms=now)
+    except (ClientError, Busy):
+        log.warning("could not expire the taken-over hold %s", booking_id, exc_info=True)
+
+
+def _hold(
+    store: Store, req: BookingRequest, *, region: str, now: int, hold_ttl: timedelta
+) -> Response:
+    room = store.get("rooms", {"hotel_id": str(req.hotel_id), "room_id": str(req.room_id)})
+    if room is None:
+        return Response(404, {"error": "unknown hotel or room"})
+
+    booking_id, room_id = str(uuid7()), str(req.room_id)
+    expires = now + ms_of(hold_ttl)
+    stay = nights(req.check_in, req.check_out)
+    taken, stale = [], set()
+    try:
+        # Date order, so two bookings of overlapping stays meet first on the earliest shared night.
+        for night in stay:
+            old = store.call(
+                "put_item",
+                "room-nights",
+                Item=dump(
+                    {**claim_key(room_id, night), "booking_id": booking_id, "expires_ms": expires}
+                ),
+                # Free, or a hold that expired more than SKEW ago (taken over).
+                ConditionExpression="attribute_not_exists(room_night) OR expires_ms < :takeover",
+                ExpressionAttributeValues=dump({":takeover": now - ms_of(SKEW)}),
+                ReturnValues="ALL_OLD",
+            ).get("Attributes")
+            taken.append(night)
+            if old:
+                stale.add(old["booking_id"]["S"])
+    except ClientError as err:
+        if not condition_failed(err):
+            raise
+        release(store, booking_id, room_id, taken)
+        return Response(409, {"error": "room is already booked for one of these nights"})
+    except Busy:
+        release(store, booking_id, room_id, taken)
+        raise
+
+    for stale_id in stale:
+        _expire_stale(store, stale_id, region=region, now=now)
+    booking = {
+        "booking_id": booking_id,
+        "hotel_id": str(req.hotel_id),
+        "room_id": room_id,
+        "guest_id": str(req.guest_id),
+        "check_in": req.check_in.isoformat(),
+        "check_out": req.check_out.isoformat(),
+        "status": Status.PENDING.value,
+        "expires_ms": expires,
+        "amount_minor": room["base_rate_minor"] * len(stay),
+        "currency": room["currency"],
+        "version": 1,
+        "home_region": region,
+        "created_ms": now,
+        "updated_ms": now,
+        "changed_in": region,
+    }
+    store.call(
+        "put_item",
+        "bookings",
+        Item=dump(booking),
+        ConditionExpression="attribute_not_exists(booking_id)",
+    )
+    return Response(201, snapshot(booking))
+
+
 def book(
-    pool: ConnectionPool,
+    store: Store,
     idem_key: str,
     req: BookingRequest,
     *,
     region: str,
     hold_ttl: timedelta,
     clock: Clock = utc_now,
-    **retry,
 ) -> Response:
-    """Hold a room for the stay: 201 new hold, 200 replay, 404, 409, 422, or 503 after retries."""
-    stay = nights(req.check_in, req.check_out)
-    request_hash = req.digest()
-
-    def work(cur: Cursor) -> Response:
-        at = clock()
-        seen = cur.execute(
-            "SELECT request_hash, response_body FROM idempotency_keys WHERE idem_key = %s",
-            (idem_key,),
-        ).fetchone()
-        if seen:
-            if seen["request_hash"] != request_hash:
-                raise Abort(422, "Idempotency-Key was used with a different request")
-            return Response(200, json.loads(seen["response_body"]))
-
-        rate = cur.execute(
-            "SELECT r.base_rate_minor, h.currency FROM rooms r"
-            " JOIN hotels h ON h.hotel_id = r.hotel_id WHERE r.room_id = %s AND r.hotel_id = %s",
-            (req.room_id, req.hotel_id),
-        ).fetchone()
-        if rate is None:
-            raise Abort(404, "unknown hotel or room")
-
-        claimants = {
-            row["booking_id"]: row
-            for row in cur.execute(
-                f"SELECT {', '.join(f'b.{c}' for c in BOOKING_FIELDS)}"
-                " FROM room_night rn JOIN bookings b ON b.booking_id = rn.booking_id"
-                " WHERE rn.hotel_id = %s AND rn.room_id = %s AND rn.night >= %s AND rn.night < %s",
-                (req.hotel_id, req.room_id, req.check_in, req.check_out),
-            )
-        }
-        if any(is_live(Status(b["status"]), b["expires_at"], at) for b in claimants.values()):
-            raise Abort(409, "room is already booked for one of these nights")
-        # Lazy expiry: a claim left by a hold that timed out is taken over.
-        for stale in claimants.values():
-            if stale["status"] == Status.PENDING:
-                change_status(cur, stale, Status.EXPIRED, "BookingExpired", region=region, at=at)
-            else:
-                release_claims(cur, stale)
-
-        booking = {
-            "booking_id": uuid7(),
-            "hotel_id": req.hotel_id,
-            "room_id": req.room_id,
-            "guest_id": req.guest_id,
-            "check_in": req.check_in,
-            "check_out": req.check_out,
-            "status": Status.PENDING.value,
-            "expires_at": at + hold_ttl,
-            "amount_minor": rate["base_rate_minor"] * len(stay),
-            "currency": rate["currency"],
-            "version": 1,
-            "home_region": region,
-            "created_at": at,
-            "updated_at": at,
-        }
-        cur.execute(
-            f"INSERT INTO bookings ({BOOKING_COLUMNS})"
-            f" VALUES ({', '.join(['%s'] * len(BOOKING_FIELDS))})",
-            tuple(booking[c] for c in BOOKING_FIELDS),
+    """Hold a room for the stay: 201 new hold, 200 replay, 404, 409, 422, or 503."""
+    nights(req.check_in, req.check_out)
+    request_hash, now = req.digest(), ms(clock())
+    try:
+        seen = _take_key(store, idem_key, request_hash, now)
+    except Busy:
+        return BUSY
+    if seen is not None:
+        return seen
+    try:
+        response = _hold(store, req, region=region, now=now, hold_ttl=hold_ttl)
+    except Busy:
+        response = BUSY
+    if response.status_code != 201:
+        _drop_key(store, idem_key, request_hash)
+        return response
+    try:
+        store.call(
+            "update_item",
+            "idempotency",
+            Key=dump({"idem_key": idem_key}),
+            UpdateExpression="SET #state = :done, #response = :response",
+            ExpressionAttributeNames={"#state": "state", "#response": "response"},
+            ExpressionAttributeValues=dump(
+                {":done": "done", ":response": json.dumps(response.body)}
+            ),
         )
-        cur.executemany(
-            "INSERT INTO room_night (hotel_id, room_id, night, booking_id) VALUES (%s, %s, %s, %s)",
-            [(req.hotel_id, req.room_id, night, booking["booking_id"]) for night in stay],
-        )
-        body = snapshot(booking)
-        cur.execute(
-            "INSERT INTO idempotency_keys (idem_key, request_hash, booking_id, status_code,"
-            " response_body, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (idem_key, request_hash, booking["booking_id"], 201, json.dumps(body), at),
-        )
-        insert_event(
-            cur,
-            aggregate_id=booking["booking_id"],
-            aggregate_version=1,
-            event_type="BookingHeld",
-            payload=body,
-            home_region=region,
-            occurred_at=at,
-        )
-        return Response(201, body)
-
-    return run_transaction(pool, work, **retry)
+    except Busy:
+        # The hold stands; a replay within the lease gets 409 and then a second hold.
+        log.warning("could not store the response for Idempotency-Key %s", idem_key)
+    return response
 
 
-def cancel(
-    pool: ConnectionPool, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now, **retry
-) -> Response:
+def cancel(store: Store, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now) -> Response:
     """Cancel a pending or confirmed booking: 200, 404, or 409 for any other state."""
 
-    def work(cur: Cursor) -> Response:
-        at = clock()
-        booking = cur.execute(
-            f"SELECT {BOOKING_COLUMNS} FROM bookings WHERE booking_id = %s FOR UPDATE",
-            (booking_id,),
-        ).fetchone()
-        if booking is None:
-            raise Abort(404, "unknown booking")
-        if booking["status"] == Status.PENDING and booking["expires_at"] <= at:
-            raise Abort(409, "the hold has expired")
+    def decide(booking: dict) -> Response:
+        now = ms(clock())
+        if booking["status"] == Status.PENDING and booking["expires_ms"] <= now:
+            return Response(409, {"error": "the hold has expired"})
         try:
-            updated = change_status(
-                cur, booking, Status.CANCELLED, "BookingCancelled", region=region, at=at
-            )
+            updated = change_status(store, booking, Status.CANCELLED, region=region, at_ms=now)
         except IllegalTransition:
-            raise Abort(409, f"a {booking['status']} booking cannot be cancelled") from None
+            return Response(409, {"error": f"a {booking['status']} booking cannot be cancelled"})
         return Response(200, snapshot(updated))
 
-    return run_transaction(pool, work, **retry)
+    return with_booking(store, booking_id, decide)
 
 
 def availability(
-    pool: ConnectionPool,
+    store: Store,
     hotel_id: uuid.UUID,
     check_in: date,
     check_out: date,
     *,
     clock: Clock = utc_now,
 ) -> list[uuid.UUID]:
-    """Rooms of the hotel with no live claim on any night of the stay."""
-    nights(check_in, check_out)
-    with pool.connection() as conn:
-        rows = conn.execute(
-            "SELECT r.room_id FROM rooms r WHERE r.hotel_id = %s AND NOT EXISTS ("
-            " SELECT 1 FROM room_night rn JOIN bookings b ON b.booking_id = rn.booking_id"
-            " WHERE rn.hotel_id = r.hotel_id AND rn.room_id = r.room_id"
-            " AND rn.night >= %s AND rn.night < %s"
-            " AND (b.status = 'confirmed' OR (b.status = 'pending' AND b.expires_at > %s)))"
-            " ORDER BY r.room_id",
-            (hotel_id, check_in, check_out, clock()),
-        ).fetchall()
-    return [row[0] for row in rows]
+    """Rooms of the hotel that a booking for the stay could claim now."""
+    stay = nights(check_in, check_out)
+    rooms = sorted(
+        item["room_id"]["S"]
+        for item in store.call(
+            "query",
+            "rooms",
+            KeyConditionExpression="hotel_id = :h",
+            ExpressionAttributeValues=dump({":h": str(hotel_id)}),
+            ConsistentRead=True,
+        )["Items"]
+    )
+    takeover = ms(clock()) - ms_of(SKEW)
+    claims = store.get_many("room-nights", [claim_key(r, n) for r in rooms for n in stay])
+    taken = {
+        c["room_night"].split("#")[0]
+        for c in claims
+        if "expires_ms" not in c or c["expires_ms"] >= takeover
+    }
+    return [uuid.UUID(r) for r in rooms if r not in taken]

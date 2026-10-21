@@ -1,8 +1,9 @@
 import json
 import uuid
 
-from support import HOLD, T0, dynamodb
+from support import HOLD, T0, changes, dynamodb
 
+from booking.events import from_change
 from booking.guests import VAULTS, Guest, register
 from booking.service import BookingRequest, book
 
@@ -15,7 +16,7 @@ def stored_in(guest_id):
     }
 
 
-def test_pii_residency(vaults, pool, room):
+def test_pii_residency(vaults, db, room):
     email = f"{uuid.uuid4().hex}@example.org"
     eu_guest = Guest("Anna Schmidt", email, "+49 30 1234567", "de")
     registered = register(eu_guest, dynamodb_for=dynamodb)
@@ -32,11 +33,10 @@ def test_pii_residency(vaults, pool, room):
     req = BookingRequest(
         hotel_id, room_id, uuid.UUID(registered["guest_id"]), T0.date(), T0.date().replace(day=3)
     )
-    assert book(pool, "k", req, region="us-east-1", hold_ttl=HOLD).status_code == 201
+    assert book(db, "k", req, region="us-east-1", hold_ttl=HOLD).status_code == 201
 
-    with pool.connection() as conn:
-        stored = json.dumps([row[0] for row in conn.execute("SELECT payload FROM outbox")])
-        bookings = json.dumps(conn.execute("SELECT * FROM bookings").fetchall(), default=str)
+    stored = json.dumps([e["payload"] for r in changes(db) for e in from_change(r)])
+    bookings = json.dumps(db.scan("bookings"))
     for pii in (eu_guest.name, eu_guest.email, eu_guest.phone):
         assert pii not in stored
         assert pii not in bookings

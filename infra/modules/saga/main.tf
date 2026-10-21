@@ -1,17 +1,23 @@
 # Hold saga in one active region: Pay races the hold TTL, then Confirm or Expire.
 
 data "aws_region" "this" {}
+data "aws_caller_identity" "this" {}
 
 locals {
   region = data.aws_region.this.region
   # The payment must finish before the hold expires; the margin covers Lambda start-up.
   payment_timeout_s = var.hold_ttl_s - 60
-  dsql_connect      = [{ Effect = "Allow", Action = "dsql:DbConnect", Resource = var.dsql_cluster_arn }]
+  # The local replica of each store table.
+  store = [{
+    Effect   = "Allow"
+    Action   = ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
+    Resource = [for name in var.store_tables : "arn:aws:dynamodb:${local.region}:${data.aws_caller_identity.this.account_id}:table/${name}"]
+  }]
   # Each function gets its own role; the simulated payment touches no database.
   functions = {
     pay     = { handler = "booking.handlers.saga.pay", timeout = local.payment_timeout_s, statements = [] }
-    confirm = { handler = "booking.handlers.saga.confirm", timeout = 30, statements = local.dsql_connect }
-    expire  = { handler = "booking.handlers.saga.expire", timeout = 30, statements = local.dsql_connect }
+    confirm = { handler = "booking.handlers.saga.confirm", timeout = 30, statements = local.store }
+    expire  = { handler = "booking.handlers.saga.expire", timeout = 30, statements = local.store }
   }
 }
 
@@ -64,8 +70,6 @@ resource "aws_lambda_function" "fn" {
 
   environment {
     variables = {
-      DSQL_ENDPOINT        = var.dsql_endpoint
-      DSQL_ROLE            = "booking_app"
       PAYMENT_FAILURE_RATE = tostring(var.payment_failure_rate)
       PAYMENT_LATENCY_S    = tostring(var.payment_latency_s)
     }

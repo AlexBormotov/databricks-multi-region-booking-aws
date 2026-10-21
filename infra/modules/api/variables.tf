@@ -7,12 +7,14 @@ variable "package_path" {
   description = "Lambda zip built by make package."
 }
 
-variable "dsql_endpoint" {
-  type = string
+variable "store_tables" {
+  type = list(string)
 }
 
-variable "dsql_cluster_arn" {
-  type = string
+variable "store_stream_arn" {
+  type        = string
+  default     = null
+  description = "The bookings stream; set only in us-east-1, the region that has it."
 }
 
 variable "stream_name" {

@@ -1,33 +1,50 @@
-from contextlib import contextmanager
+import pytest
+from botocore.exceptions import ClientError
 
-from psycopg import errors
-
-from booking.service import BACKOFF_BASE_S, MAX_ATTEMPTS, run_transaction
+from booking.store import BACKOFF_BASE_S, MAX_ATTEMPTS, Busy, Store
 
 
-class ConflictingPool:
-    """Every transaction fails at commit with an OCC conflict."""
+class ConflictingClient:
+    """Every write loses a cross-region race (MRSC's write-write conflict)."""
 
     attempts = 0
 
-    @contextmanager
-    def connection(self):
+    def put_item(self, **params):
         self.attempts += 1
-        raise errors.SerializationFailure("change conflicts with another transaction (OC000)")
-        yield
+        raise ClientError(
+            {"Error": {"Code": "ReplicatedWriteConflictException", "Message": "conflict"}},
+            "PutItem",
+        )
 
 
-def test_conflicts_retry_with_backoff_then_503():
-    pool, sleeps = ConflictingPool(), []
-    response = run_transaction(pool, lambda cur: None, sleep=sleeps.append, rng=lambda: 1.0)
+def test_conflicts_retry_with_backoff_then_busy():
+    client, sleeps = ConflictingClient(), []
+    store = Store(client, sleep=sleeps.append, rng=lambda: 1.0)
+    with pytest.raises(Busy):
+        store.call("put_item", "bookings", Item={})
 
-    assert pool.attempts == MAX_ATTEMPTS
+    assert client.attempts == MAX_ATTEMPTS
     assert sleeps == [BACKOFF_BASE_S * 2**i for i in range(MAX_ATTEMPTS - 1)]
-    assert response.status_code == 503
-    assert response.headers == {"Retry-After": "1"}
 
 
 def test_full_jitter_can_retry_immediately():
     sleeps = []
-    run_transaction(ConflictingPool(), lambda cur: None, sleep=sleeps.append, rng=lambda: 0.0)
+    with pytest.raises(Busy):
+        Store(ConflictingClient(), sleep=sleeps.append, rng=lambda: 0.0).call(
+            "put_item", "bookings", Item={}
+        )
     assert sleeps == [0.0] * (MAX_ATTEMPTS - 1)
+
+
+def test_other_errors_are_not_retried():
+    class Broken:
+        attempts = 0
+
+        def put_item(self, **params):
+            self.attempts += 1
+            raise ClientError({"Error": {"Code": "ValidationException", "Message": "x"}}, "PutItem")
+
+    client = Broken()
+    with pytest.raises(ClientError):
+        Store(client, sleep=lambda s: None).call("put_item", "bookings", Item={})
+    assert client.attempts == 1

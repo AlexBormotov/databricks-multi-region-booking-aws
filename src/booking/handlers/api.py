@@ -44,7 +44,7 @@ def register_guest(event) -> Response:
 def get_availability(event) -> Response:
     query = event.get("queryStringParameters") or {}
     rooms = service.availability(
-        runtime.pool(),
+        runtime.store(),
         uuid.UUID(query["hotel_id"]),
         date.fromisoformat(query["check_in"]),
         date.fromisoformat(query["check_out"]),
@@ -65,7 +65,7 @@ def create_booking(event) -> Response:
         date.fromisoformat(body["check_out"]),
     )
     response = service.book(
-        runtime.pool(), idem_key, req, region=runtime.region(), hold_ttl=runtime.hold_ttl()
+        runtime.store(), idem_key, req, region=runtime.region(), hold_ttl=runtime.hold_ttl()
     )
     if response.status_code in (200, 201):
         # A replay starts the saga again too: the execution name makes the start idempotent.
@@ -101,7 +101,7 @@ def _start_saga(booking_id: str) -> None:
 def search_hotels(event) -> Response:
     query = event.get("queryStringParameters") or {}
     hotels = search.search(
-        runtime.pool(),
+        runtime.store(),
         runtime.client("bedrock-agent-runtime", search.KB_REGION),
         os.environ["KNOWLEDGE_BASE_ID"],
         query["q"],
@@ -113,7 +113,7 @@ def search_hotels(event) -> Response:
 
 def cancel_booking(event) -> Response:
     booking_id = uuid.UUID(event["pathParameters"]["booking_id"])
-    return service.cancel(runtime.pool(), booking_id, region=runtime.region())
+    return service.cancel(runtime.store(), booking_id, region=runtime.region())
 
 
 ROUTES = {
