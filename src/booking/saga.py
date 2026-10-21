@@ -1,5 +1,5 @@
 """Hold saga steps, run by Step Functions: a simulated payment races the hold's TTL, and both
-outcomes end in an update guarded by the booking's state. Every step is safe to retry.
+outcomes end in a conditional update of the booking. Every step is safe to retry.
 """
 
 import random
@@ -7,24 +7,21 @@ import time
 import uuid
 from collections.abc import Callable
 
-from psycopg import Cursor
-from psycopg_pool import ConnectionPool
+from botocore.exceptions import ClientError
 
 from booking.domain import Status
-from booking.outbox import insert_event
 from booking.service import (
-    BOOKING_COLUMNS,
-    Abort,
     Clock,
     Response,
     change_status,
-    run_transaction,
+    claim_key,
+    ms,
     snapshot,
+    stay_of,
     utc_now,
+    with_booking,
 )
-
-# One payment per booking, so one refund: a name-based id makes a retried step a no-op.
-REFUND_NAMESPACE = uuid.UUID("5f2b8f0e-3d0a-4c56-9a51-6b7c0c1d2e3f")
+from booking.store import Store, condition_failed, dump
 
 
 class PaymentDeclined(Exception):
@@ -44,65 +41,78 @@ def pay(
         raise PaymentDeclined()
 
 
-def _locked(cur: Cursor, booking_id: uuid.UUID) -> dict:
-    booking = cur.execute(
-        f"SELECT {BOOKING_COLUMNS} FROM bookings WHERE booking_id = %s FOR UPDATE", (booking_id,)
-    ).fetchone()
-    if booking is None:
-        raise Abort(404, "unknown booking")
-    return booking
+def _keep_claims(store: Store, booking: dict) -> bool:
+    """Make the booking's claims permanent; False if one of them was taken over."""
+    for night in stay_of(booking):
+        try:
+            store.call(
+                "update_item",
+                "room-nights",
+                Key=dump(claim_key(booking["room_id"], night)),
+                UpdateExpression="REMOVE expires_ms",
+                ConditionExpression="booking_id = :b",
+                ExpressionAttributeValues=dump({":b": booking["booking_id"]}),
+            )
+        except ClientError as err:
+            if not condition_failed(err):
+                raise
+            return False
+    return True
 
 
 def confirm(
-    pool: ConnectionPool, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now, **retry
+    store: Store, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now
 ) -> Response:
     """Payment succeeded. Confirms a hold that is still live (200). A payment that arrives after
-    the hold expired, or after a cancel, is refunded and the booking is not confirmed (409)."""
+    the hold expired, or after a cancel, is refunded and the booking is not confirmed (409).
 
-    def work(cur: Cursor) -> Response:
-        at = clock()
-        booking = _locked(cur, booking_id)
+    The claims are made permanent before the booking is confirmed, so a crash between the two
+    leaves the room blocked, never sold twice."""
+
+    def decide(booking: dict) -> Response:
+        now = ms(clock())
         if booking["status"] == Status.CONFIRMED:
             return Response(200, snapshot(booking))
-        if booking["status"] == Status.PENDING and booking["expires_at"] > at:
+        live = booking["status"] == Status.PENDING and booking["expires_ms"] > now
+        if live and _keep_claims(store, booking):
             confirmed = change_status(
-                cur, booking, Status.CONFIRMED, "BookingConfirmed", region=region, at=at
+                store,
+                booking,
+                Status.CONFIRMED,
+                region=region,
+                at_ms=now,
+                guard="expires_ms > :now",
+                guard_values={":now": now},
             )
             return Response(200, snapshot(confirmed))
 
         if booking["status"] == Status.PENDING:
-            booking = change_status(
-                cur, booking, Status.EXPIRED, "BookingExpired", region=region, at=at
+            booking = change_status(store, booking, Status.EXPIRED, region=region, at_ms=now)
+        if not booking.get("refunded"):
+            # A refund changes no booking state, so it keeps the version.
+            store.call(
+                "update_item",
+                "bookings",
+                Key=dump({"booking_id": booking["booking_id"]}),
+                UpdateExpression="SET refunded = :yes, updated_ms = :at, changed_in = :region",
+                ConditionExpression="attribute_not_exists(refunded)",
+                ExpressionAttributeValues=dump({":yes": True, ":at": now, ":region": region}),
             )
-        # A refund changes no booking state, so it keeps the current version.
-        insert_event(
-            cur,
-            event_id=uuid.uuid5(REFUND_NAMESPACE, str(booking_id)),
-            aggregate_id=booking_id,
-            aggregate_version=booking["version"],
-            event_type="PaymentRefunded",
-            payload={**snapshot(booking), "refund_minor": booking["amount_minor"]},
-            home_region=region,
-            occurred_at=at,
-        )
+            booking = {**booking, "refunded": True}
         return Response(409, {**snapshot(booking), "refunded": True})
 
-    return run_transaction(pool, work, **retry)
+    return with_booking(store, booking_id, decide)
 
 
-def expire(
-    pool: ConnectionPool, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now, **retry
-) -> Response:
+def expire(store: Store, booking_id: uuid.UUID, *, region: str, clock: Clock = utc_now) -> Response:
     """The hold timed out or the payment was declined: expire a pending booking and release its
     room-nights. Any other state is left as it is."""
 
-    def work(cur: Cursor) -> Response:
-        at = clock()
-        booking = _locked(cur, booking_id)
+    def decide(booking: dict) -> Response:
         if booking["status"] == Status.PENDING:
             booking = change_status(
-                cur, booking, Status.EXPIRED, "BookingExpired", region=region, at=at
+                store, booking, Status.EXPIRED, region=region, at_ms=ms(clock())
             )
         return Response(200, snapshot(booking))
 
-    return run_transaction(pool, work, **retry)
+    return with_booking(store, booking_id, decide)

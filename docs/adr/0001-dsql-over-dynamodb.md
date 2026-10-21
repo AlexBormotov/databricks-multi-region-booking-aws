@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0002
+---
+
 # Aurora DSQL over DynamoDB Global Tables for the booking store
 
 **Context.** A booking must claim every night of its stay so that no room-night is sold twice, while

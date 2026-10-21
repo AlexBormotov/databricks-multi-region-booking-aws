@@ -1,4 +1,5 @@
-"""Room-night claims on DynamoDB, the alternative to DSQL that ADR 0001 rejects.
+"""Room-night claims on DynamoDB from the spike that ADR 0001 rejected and ADR 0002 adopted; the
+store itself is `booking.service`. Kept for the MRSC race script.
 
 A claim is one conditional `PutItem` per night. MRSC tables have no transactions, so a multi-night
 claim that loses a night part-way deletes the nights it already took (a compensating step).

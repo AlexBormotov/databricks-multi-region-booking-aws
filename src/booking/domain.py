@@ -3,10 +3,10 @@
 import os
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from enum import StrEnum
 
-# A stay claims one row per night; DSQL allows 3,000 rows per transaction.
+# A stay claims one item per night, one write each.
 MAX_NIGHTS = 30
 
 
@@ -35,9 +35,9 @@ def transition(current: Status, target: Status) -> Status:
     return target
 
 
-def is_live(status: Status, expires_at: datetime, now: datetime) -> bool:
+def is_live(status: Status, expires_ms: int, now_ms: int) -> bool:
     """A live booking holds its room-nights: confirmed, or pending before its hold expires."""
-    return status == Status.CONFIRMED or (status == Status.PENDING and expires_at > now)
+    return status == Status.CONFIRMED or (status == Status.PENDING and expires_ms > now_ms)
 
 
 def nights(check_in: date, check_out: date) -> list[date]:

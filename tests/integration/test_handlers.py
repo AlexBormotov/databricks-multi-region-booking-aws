@@ -6,9 +6,10 @@ import uuid
 
 import boto3
 import pytest
-from support import FAKE_AWS, read_all
+from support import FAKE_AWS, changes, read_all
 
-from booking.handlers import api, poller, runtime
+from booking.handlers import api, runtime
+from booking.handlers import events as events_handler
 from booking.handlers import saga as saga_handlers
 
 
@@ -33,7 +34,7 @@ def call(event):
 
 
 @pytest.fixture
-def lambda_env(monkeypatch, pool, kinesis, vaults):
+def lambda_env(monkeypatch, db, kinesis, vaults):
     _, stream = kinesis
     sfn = boto3.client("stepfunctions", endpoint_url=os.environ["MOTO_ENDPOINT_URL"], **FAKE_AWS)
     machine = sfn.create_state_machine(
@@ -48,10 +49,9 @@ def lambda_env(monkeypatch, pool, kinesis, vaults):
         "STREAM_NAME": stream,
         "STATE_MACHINE_ARN": machine,
         "HOLD_TTL_S": "900",
-        "POLLER_SECONDS": "0.5",
     }.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(runtime, "pool", lambda: pool)
+    monkeypatch.setattr(runtime, "store", lambda: db)
     runtime.client.cache_clear()
     yield sfn, machine
     runtime.client.cache_clear()
@@ -119,7 +119,7 @@ def test_unknown_route_is_404(lambda_env):
     assert call(http("DELETE /bookings"))[0] == 404
 
 
-def test_saga_and_poller_handlers(lambda_env, room, kinesis):
+def test_saga_and_events_handlers(lambda_env, db, room, kinesis):
     body = booking_body(room, str(uuid.uuid4()))
     _, booking = call(http("POST /bookings", body, {"idempotency-key": "k"}))
     task = {"booking_id": booking["booking_id"]}
@@ -128,7 +128,7 @@ def test_saga_and_poller_handlers(lambda_env, room, kinesis):
     assert (confirmed["status_code"], confirmed["body"]["status"]) == (200, "confirmed")
     assert saga_handlers.expire(task, None)["body"]["status"] == "confirmed"
 
-    assert poller.handler({}, None) == {"published": 2}
+    assert events_handler.handler({"Records": changes(db)}, None) == {"published": 2}
     client, stream = kinesis
     assert [e["event_type"] for e in read_all(client, stream)] == [
         "BookingHeld",

@@ -1,17 +1,14 @@
 from booking.generator import SCALES, reference
-from booking.seed import HOTEL_COLUMNS, ROOM_COLUMNS, seed
+from booking.seed import ROOM_FIELDS, seed
 
 
-def rows(pool, table, columns):
-    with pool.connection() as conn:
-        found = conn.execute(f"SELECT {', '.join(columns)} FROM {table}").fetchall()
-    return {tuple(str(v) for v in row) for row in found}
-
-
-def test_seed_matches_reference(pool):
+def test_seed_matches_reference(db):
     ref = reference(7, SCALES["small"])
-    assert seed(pool, 7, "small") == {"hotels": 12, "rooms": 60}
-    assert seed(pool, 7, "small") == {"hotels": 12, "rooms": 60}  # re-run inserts nothing
-    for table, columns in (("hotels", HOTEL_COLUMNS), ("rooms", ROOM_COLUMNS)):
-        expected = {tuple(str(r[c]) for c in columns) for r in ref[table]}
-        assert rows(pool, table, columns) == expected
+    assert seed(db, 7, "small") == {"rooms": 60}
+    assert seed(db, 7, "small") == {"rooms": 60}  # a re-run adds nothing
+    currency = {h["hotel_id"]: h["currency"] for h in ref["hotels"]}
+    expected = {
+        tuple(str(v) for v in ({**r, "currency": currency[r["hotel_id"]]}[f] for f in ROOM_FIELDS))
+        for r in ref["rooms"]
+    }
+    assert {tuple(str(r[f]) for f in ROOM_FIELDS) for r in db.scan("rooms")} == expected

@@ -1,26 +1,25 @@
-"""Hotels and rooms from the generator's reference data, so the booking store and the lakehouse
-describe the same hotels for a seed. Re-running it inserts nothing new."""
-
-from psycopg_pool import ConnectionPool
+"""Rooms from the generator's reference data, so the booking store and the lakehouse describe the
+same hotels for a seed. Each room carries its hotel's currency, the one hotel fact a booking needs.
+Re-running it writes the same items again."""
 
 from booking.generator import SCALES, reference
+from booking.store import Store, dump
 
-HOTEL_COLUMNS = ("hotel_id", "name", "city", "country", "tz", "currency", "lat", "lon")
-ROOM_COLUMNS = ("room_id", "hotel_id", "room_type", "base_rate_minor")
+ROOM_FIELDS = ("hotel_id", "room_id", "room_type", "base_rate_minor", "currency")
 
 
-def seed(pool: ConnectionPool, seed_value: int, scale_name: str) -> dict[str, int]:
-    """Insert the reference hotels and rooms; returns how many rows each table now has."""
+def seed(store: Store, seed_value: int, scale_name: str) -> dict[str, int]:
+    """Write the reference rooms; returns how many rooms the store now has."""
     ref = reference(seed_value, SCALES[scale_name])
-    counts = {}
-    for table, columns in (("hotels", HOTEL_COLUMNS), ("rooms", ROOM_COLUMNS)):
-        placeholders = ", ".join(["%s"] * len(columns))
-        with pool.connection() as conn:
-            # One transaction per table; the demo scale stays under DSQL's 3,000 rows per commit.
-            conn.cursor().executemany(
-                f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
-                f" ON CONFLICT DO NOTHING",
-                [tuple(row[c] for c in columns) for row in ref[table]],
-            )
-            counts[table] = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-    return counts
+    currency = {h["hotel_id"]: h["currency"] for h in ref["hotels"]}
+    rooms = [{**r, "currency": currency[r["hotel_id"]]} for r in ref["rooms"]]
+    for start in range(0, len(rooms), 25):
+        pending = {
+            store.name("rooms"): [
+                {"PutRequest": {"Item": dump({f: r[f] for f in ROOM_FIELDS})}}
+                for r in rooms[start : start + 25]
+            ]
+        }
+        while pending:
+            pending = store.client.batch_write_item(RequestItems=pending).get("UnprocessedItems")
+    return {"rooms": len(store.scan("rooms"))}

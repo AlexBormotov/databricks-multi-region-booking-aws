@@ -3,13 +3,7 @@
 import os
 
 import boto3
-import psycopg
 from support import FAKE_AWS
-
-
-def test_postgres():
-    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-        assert conn.execute("select 1").fetchone() == (1,)
 
 
 def test_moto():

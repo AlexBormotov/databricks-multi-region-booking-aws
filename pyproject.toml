@@ -4,9 +4,7 @@ version = "0.1.0"
 description = "Multi-region hotel booking with zero double bookings, plus a Databricks lakehouse"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "aurora-dsql-python-connector>=0.2.7",
     "boto3>=1.43",
-    "psycopg[binary,pool]>=3.3.6",
 ]
 
 [dependency-groups]

@@ -12,7 +12,6 @@ python -m ops.session validate-bundle
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -23,8 +22,8 @@ from pathlib import Path
 import boto3
 
 from booking import corpus
-from booking.db import create_pool, grant_app_role, migrate
 from booking.seed import seed
+from booking.store import Store
 
 HOME = "us-east-1"
 EXPIRY_PARAM = "/booking/session/expires_at"
@@ -82,22 +81,8 @@ def empty_bucket(s3, bucket: str) -> int:
 
 
 def prepare(seed_value: int, scale: str) -> None:
-    """Schema, reference data and the booking_app mapping in DSQL, then the search corpus."""
-    endpoints = outputs("us-east-1/dsql")["endpoints"]
-    db_roles = tuple(
-        arn
-        for component in ("us-east-1/api", "us-east-2/api", "us-east-1/saga", "us-east-2/saga")
-        for arn in outputs(component)["db_role_arns"]
-    )
-    # Schema and rows replicate between the peers; the role mapping is applied on each to be sure.
-    for region in (HOME, "us-east-2"):
-        os.environ["DSQL_ENDPOINT"] = endpoints[region]
-        os.environ.pop("DSQL_ROLE", None)
-        with create_pool(max_size=1) as pool:
-            if region == HOME:
-                print("migrations:", migrate(pool))
-                print("seed:", seed(pool, seed_value, scale))
-            grant_app_role(pool, db_roles)
+    """Reference rooms in the booking store (replicated to us-east-2), then the search corpus."""
+    print("seed:", seed(Store(boto3.client("dynamodb", region_name=HOME)), seed_value, scale))
     ingest_corpus(seed_value, scale, outputs("us-east-1/search"))
 
 

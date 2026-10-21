@@ -33,7 +33,7 @@ workflow. The plan is `plan.md`; the budget alert at $12 and the reaper are the 
 
 1. Actions, `cloud-session`, Run workflow, scale `small`. Approve the `demo-prod` deployment.
 2. The run takes about 40 minutes:
-   - `make up`, about 15 minutes, most of it DSQL and the KB ingestion;
+   - `make up`, about 15 minutes, most of it the MRSC tables and the KB ingestion;
    - `make demo`, about 15 minutes, most of it waiting for the k6 instances;
    - `make down`.
 3. Download the `cloud-session-<run id>` artifact. `demo.json` says which steps passed; each step

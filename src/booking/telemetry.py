@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 
 from booking.domain import uuid7
-from booking.outbox import envelope
+from booking.events import envelope
 from booking.service import BookingRequest
 
 log = logging.getLogger(__name__)

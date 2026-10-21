@@ -1,6 +1,6 @@
 """Synthetic history and reference data for the lakehouse, deterministic for a seed.
 
-Events follow the outbox contract (`booking.outbox.envelope`) and the booking rules: a room-night
+Events follow the event contract (`booking.events.envelope`) and the booking rules: a room-night
 is never held twice while live, and a booking that loses the race leaves only a
 `BookingAttemptRejected` record, as in the live system.
 """
@@ -14,8 +14,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from booking.outbox import envelope
-from booking.saga import REFUND_NAMESPACE
+from booking.events import REFUND_NAMESPACE, envelope
 
 REGIONS = ("us-east-1", "us-east-2")
 HOLD_TTL = timedelta(minutes=15)
@@ -65,7 +64,7 @@ def _uuid7(rng: random.Random, at: datetime) -> uuid.UUID:
 
 
 def reference(seed: int, scale: Scale) -> dict[str, list[dict]]:
-    """Hotels and rooms (the DSQL columns) and daily FX rates to USD."""
+    """Hotels and rooms (what the booking store is seeded with) and daily FX rates to USD."""
     rng = random.Random(seed)
     hotels, rooms = [], []
     for i in range(scale.hotels):

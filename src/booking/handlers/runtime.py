@@ -6,7 +6,7 @@ from functools import cache
 
 import boto3
 
-from booking.db import create_pool
+from booking.store import Store
 
 # The single event stream lives in us-east-1; the us-east-2 functions put to it cross-region.
 STREAM_REGION = "us-east-1"
@@ -25,10 +25,9 @@ def stream() -> str:
 
 
 @cache
-def pool():
-    opened = create_pool(max_size=int(os.environ.get("POOL_MAX_SIZE", "4")))
-    opened.open()
-    return opened
+def store() -> Store:
+    # The tables are replicated; each region's functions use their local replica.
+    return Store(client("dynamodb", region()), os.environ.get("STORE_PREFIX", "booking"))
 
 
 @cache

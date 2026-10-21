@@ -1,38 +1,47 @@
-# Booking API and outbox poller in one active region.
+# Booking API in one active region, plus, in the region that has the bookings stream, the
+# function that turns its changes into events.
 
 data "aws_region" "this" {}
+data "aws_caller_identity" "this" {}
 
 locals {
   region = data.aws_region.this.region
   environment = {
-    DSQL_ENDPOINT     = var.dsql_endpoint
-    DSQL_ROLE         = "booking_app"
     STREAM_NAME       = var.stream_name
     STATE_MACHINE_ARN = var.state_machine_arn
     HOLD_TTL_S        = tostring(var.hold_ttl_s)
     KNOWLEDGE_BASE_ID = var.knowledge_base_id
   }
-  dsql_connect = { Effect = "Allow", Action = "dsql:DbConnect", Resource = var.dsql_cluster_arn }
-  put_events   = { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn }
+  # The local replica of each store table.
+  store = {
+    Effect   = "Allow"
+    Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem"]
+    Resource = [for name in var.store_tables : "arn:aws:dynamodb:${local.region}:${data.aws_caller_identity.this.account_id}:table/${name}"]
+  }
+  put_events = { Effect = "Allow", Action = ["kinesis:PutRecord", "kinesis:PutRecords"], Resource = var.stream_arn }
   # Each function gets its own role with only what it calls.
-  functions = {
+  functions = merge({
     api = {
       handler = "booking.handlers.api.handler"
       timeout = 15
       statements = [
-        local.dsql_connect,
+        local.store,
         local.put_events, # rejected-attempt telemetry
         { Effect = "Allow", Action = "dynamodb:PutItem", Resource = var.guest_vault_arns },
         { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
         { Effect = "Allow", Action = "bedrock:Retrieve", Resource = var.knowledge_base_arn },
       ]
     }
-    poller = {
-      handler    = "booking.handlers.poller.handler"
-      timeout    = 60
-      statements = [local.dsql_connect, local.put_events]
+    }, var.store_stream_arn == null ? {} : {
+    events = {
+      handler = "booking.handlers.events.handler"
+      timeout = 60
+      statements = [
+        local.put_events,
+        { Effect = "Allow", Action = ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"], Resource = var.store_stream_arn },
+      ]
     }
-  }
+  })
   routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel", "GET /search"]
 }
 
@@ -127,20 +136,13 @@ resource "aws_lambda_permission" "apigw" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
-resource "aws_cloudwatch_event_rule" "poller" {
-  name                = "booking-outbox-poller"
-  schedule_expression = "rate(1 minute)"
-}
-
-resource "aws_cloudwatch_event_target" "poller" {
-  rule = aws_cloudwatch_event_rule.poller.name
-  arn  = aws_lambda_function.fn["poller"].arn
-}
-
-resource "aws_lambda_permission" "events" {
-  statement_id  = "events"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.fn["poller"].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.poller.arn
+# A failed batch is delivered again until it succeeds or the stream drops it after 24 h; the
+# lakehouse removes the duplicates by event_id.
+resource "aws_lambda_event_source_mapping" "events" {
+  count                              = var.store_stream_arn == null ? 0 : 1
+  event_source_arn                   = var.store_stream_arn
+  function_name                      = aws_lambda_function.fn["events"].arn
+  starting_position                  = "TRIM_HORIZON"
+  batch_size                         = 100
+  maximum_batching_window_in_seconds = 1
 }

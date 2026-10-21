@@ -1,4 +1,4 @@
-"""The demo steps that need no cloud service, against the local API server over PostgreSQL."""
+"""The demo steps that need no cloud service, against the local API server over DynamoDB Local."""
 
 import json
 import threading
@@ -14,9 +14,9 @@ from ops import demo
 
 
 @pytest.fixture
-def ctx(monkeypatch, pool, vaults, tmp_path):
-    seed(pool, 7, "small")
-    monkeypatch.setattr(runtime, "pool", lambda: pool)
+def ctx(monkeypatch, db, vaults, tmp_path):
+    seed(db, 7, "small")
+    monkeypatch.setattr(runtime, "store", lambda: db)
     runtime.client.cache_clear()
     for key, value in local_api.fake_aws().items():
         monkeypatch.setenv(key, value)

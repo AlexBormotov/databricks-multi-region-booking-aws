@@ -27,12 +27,12 @@ from urllib.parse import urlencode
 import boto3
 
 from booking import generator
-from booking.db import create_pool
+from booking.service import ms
+from booking.store import Store, violations
 from ops.session import HOME, LIVE, bundle, outputs, statement
 
 ARTIFACTS = Path("artifacts")
 REPO = Path(__file__).resolve().parents[1]
-INVARIANT = (REPO / "sql" / "invariant.sql").read_text(encoding="utf-8")
 ATTEMPTS = 1000
 K6_REGIONS = ("us-east-1", "us-east-2", "us-west-2")
 # The contested room-night lies after every stay the live traffic books.
@@ -276,22 +276,26 @@ def k6(ctx) -> dict:
 
 def invariant(ctx) -> dict:
     room = ctx["rooms"][-1]
-    os.environ["DSQL_ENDPOINT"] = ctx["dsql_endpoint"]
-    os.environ.pop("DSQL_ROLE", None)
-    with create_pool(max_size=1) as pool, pool.connection() as conn:
-        violations = conn.execute(INVARIANT).fetchall()
-        contested = conn.execute(
-            "SELECT count(*) FROM bookings WHERE room_id = %s AND check_in < %s AND %s < check_out",
-            (room["room_id"], CONTESTED[1], CONTESTED[0]),
-        ).fetchone()[0]
-        total = conn.execute("SELECT count(*) FROM bookings").fetchone()[0]
+    store = Store(boto3.client("dynamodb", region_name=HOME))
+    sold_twice = violations(store, ms(datetime.now(UTC)))
+    bookings = store.scan("bookings")
+    contested = sum(
+        b["room_id"] == room["room_id"]
+        and b["check_in"] < str(CONTESTED[1])
+        and str(CONTESTED[0]) < b["check_out"]
+        for b in bookings
+    )
     failures = []
-    if violations:
-        failures.append(f"{len(violations)} room-nights sold twice")
+    if sold_twice:
+        failures.append(f"{len(sold_twice)} room-nights sold twice")
     if contested != 1:
         failures.append(f"{contested} bookings exist for the contested room-night, expected 1")
-    return {"violations": [list(map(str, v)) for v in violations],
-            "contested_bookings": contested, "bookings": total, "failures": failures}  # fmt: skip
+    return {
+        "violations": [list(v) for v in sold_twice],
+        "contested_bookings": contested,
+        "bookings": len(bookings),
+        "failures": failures,
+    }
 
 
 def mrsc(ctx) -> dict:
@@ -349,7 +353,6 @@ def context(seed: int, scale: str) -> dict:
         "rooms": sorted(ref["rooms"], key=lambda r: r["room_id"]),
         "apis": [outputs(f"{r}/api")["api_url"].rstrip("/") for r in ("us-east-1", "us-east-2")],
         "landing": outputs("us-east-1/landing")["bucket"],
-        "dsql_endpoint": outputs("us-east-1/dsql")["endpoints"][HOME],
         "mrsc_table": outputs("us-east-1/mrsc")["table_name"],
         "warehouse_id": outputs("us-east-1/databricks_uc").get("warehouse_id")
         if os.environ.get("DATABRICKS_HOST")
