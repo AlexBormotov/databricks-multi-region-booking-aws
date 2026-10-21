@@ -383,6 +383,7 @@ def main(argv=None) -> None:
     demo = commands.add_parser("run")
     demo.add_argument("--seed", type=int, required=True)
     demo.add_argument("--scale", required=True)
+    demo.add_argument("--no-search", dest="search", action="store_false")
     check = commands.add_parser("check-k6")
     check.add_argument("--attempts", type=int, required=True)
     check.add_argument("summaries", nargs="+", type=Path)
@@ -391,6 +392,8 @@ def main(argv=None) -> None:
     if args.command == "run":
         ctx = context(args.seed, args.scale)
         steps = STEPS | ({"lakehouse": lakehouse} if ctx["warehouse_id"] else {})
+        if not args.search:
+            del steps["search"]
         summary = run(ctx, steps)
         sys.exit(0 if all(s["passed"] for s in summary.values()) else 1)
     if args.command == "check-k6":

@@ -9,6 +9,10 @@ on:
         type: choice
         options: [small, demo]
         default: small
+      search:
+        description: Ingest the search corpus and run the /search step (needs Bedrock model access)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -43,8 +47,8 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
-      - run: make up
-      - run: make demo SCALE=${{ inputs.scale }}
+      - run: make up SCALE=${{ inputs.scale }} SEARCH=${{ inputs.search && 'on' || 'off' }}
+      - run: make demo SCALE=${{ inputs.scale }} SEARCH=${{ inputs.search && 'on' || 'off' }}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
