@@ -7,12 +7,13 @@
 // In the cloud each of three instances runs a share of the attempts; ops/demo.py adds them up.
 // START_AT (epoch ms) holds every VU's first request until one shared instant, so the attempts
 // really race; without it the first booking commits before most of the others arrive.
-// A 503 (Lambda throttled, or the store too busy) and a 409 with Retry-After (the key still in
-// flight) are retried with the same Idempotency-Key, so every attempt reaches the store; an
+// A 429 or 503 (API Gateway or Lambda throttled, or the store too busy) and a 409 with
+// Retry-After (the key still in flight) are retried with the same Idempotency-Key, so every attempt reaches the store; an
 // attempt still unanswered after RETRIES tries counts as busy.
 
 import http from "k6/http";
 import { sleep } from "k6";
+import exec from "k6/execution";
 import { Counter } from "k6/metrics";
 
 const urls = __ENV.API_URLS.split(",");
@@ -21,6 +22,9 @@ const retries = Number(__ENV.RETRIES || 30);
 // One counter per outcome: tagged sub-metrics reach the summary only when a threshold names them.
 const outcomes = { 201: new Counter("created"), 409: new Counter("conflict"), 503: new Counter("busy") };
 const other = new Counter("other");
+// Tagged sub-metrics reach the summary only through a threshold, so each status that may land in
+// `other` gets one; 0 is a request that got no response.
+const OTHER_STATUSES = [0, 400, 403, 404, 422, 429, 500, 502, 504];
 const retried = new Counter("retried");
 
 export const options = {
@@ -32,6 +36,7 @@ export const options = {
       maxDuration: "5m",
     },
   },
+  thresholds: Object.fromEntries(OTHER_STATUSES.map((s) => [`other{status:${s}}`, ["count>=0"]])),
 };
 
 function uuid4() {
@@ -44,7 +49,9 @@ function uuid4() {
 
 export default function () {
   if (__ENV.START_AT && __ITER === 0) sleep(Math.max(0, Number(__ENV.START_AT) - Date.now()) / 1000);
-  const url = urls[__ITER % urls.length];
+  // The test-wide iteration number: __ITER counts per VU, and with one iteration per VU it is
+  // always 0, which sent every attempt to the first URL.
+  const url = urls[exec.scenario.iterationInTest % urls.length];
   const body = JSON.stringify({
     hotel_id: __ENV.HOTEL_ID,
     room_id: __ENV.ROOM_ID,
@@ -60,10 +67,14 @@ export default function () {
       sleep(Math.random() * Math.min(2, 0.1 * 2 ** attempt)); // full jitter, capped at 2 s
     }
     response = http.post(`${url}/bookings`, body, params);
-    const again = response.status === 503 || (response.status === 409 && response.headers["Retry-After"]);
+    const again =
+      response.status === 429 ||
+      response.status === 503 ||
+      (response.status === 409 && response.headers["Retry-After"]);
     if (!again) break;
   }
-  (outcomes[response.status] || other).add(1);
+  if (outcomes[response.status]) outcomes[response.status].add(1);
+  else other.add(1, { status: String(response.status) });
   if (!outcomes[response.status]) console.error(`unexpected ${response.status}: ${response.body}`);
 }
 
@@ -72,6 +83,11 @@ export function handleSummary(data) {
   const counts = {};
   for (const name of ["created", "conflict", "busy", "other", "retried"]) {
     counts[name] = data.metrics[name] ? data.metrics[name].values.count : 0;
+  }
+  counts.other_by_status = {};
+  for (const s of OTHER_STATUSES) {
+    const metric = data.metrics[`other{status:${s}}`];
+    if (metric && metric.values.count) counts.other_by_status[s] = metric.values.count;
   }
   return { [__ENV.SUMMARY || "summary.json"]: JSON.stringify(counts, null, 2) };
 }
