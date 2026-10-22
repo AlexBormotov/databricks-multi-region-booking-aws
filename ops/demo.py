@@ -131,8 +131,14 @@ def traffic(ctx, bookings: int = 200) -> dict:
         }))  # fmt: skip
 
     def book(request):
+        """A throttled booking (429, 503) is sent again with the same key, as a client would."""
         api, key, body = request
-        return api, call("POST", f"{api}/bookings", body, {"idempotency-key": key})
+        for attempt in range(10):
+            time.sleep(random.uniform(0, min(2, 0.1 * 2**attempt)) if attempt else 0)
+            status, answer = call("POST", f"{api}/bookings", body, {"idempotency-key": key})
+            if status not in (429, 503):
+                break
+        return api, (status, answer)
 
     with ThreadPoolExecutor(max_workers=16) as pool:
         results = list(pool.map(book, requests))
