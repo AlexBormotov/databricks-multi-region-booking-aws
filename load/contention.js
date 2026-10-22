@@ -1,5 +1,5 @@
 // The contention scenario: ATTEMPTS bookings of one room-night, each with its own guest and
-// Idempotency-Key, spread over the API URLs. Exactly one may get 201; the rest get 409 or 503.
+// Idempotency-Key, spread over the API URLs. Exactly one may get 201; the rest must get 409.
 //
 //   k6 run -e API_URLS=https://a,https://b -e HOTEL_ID=.. -e ROOM_ID=.. -e ATTEMPTS=1000 \
 //     -e VUS=200 -e SUMMARY=summary.json load/contention.js
@@ -7,6 +7,9 @@
 // In the cloud each of three instances runs a share of the attempts; ops/demo.py adds them up.
 // START_AT (epoch ms) holds every VU's first request until one shared instant, so the attempts
 // really race; without it the first booking commits before most of the others arrive.
+// A 503 (Lambda throttled, or the store too busy) and a 409 with Retry-After (the key still in
+// flight) are retried with the same Idempotency-Key, so every attempt reaches the store; an
+// attempt still unanswered after RETRIES tries counts as busy.
 
 import http from "k6/http";
 import { sleep } from "k6";
@@ -14,9 +17,11 @@ import { Counter } from "k6/metrics";
 
 const urls = __ENV.API_URLS.split(",");
 const attempts = Number(__ENV.ATTEMPTS || 1000);
+const retries = Number(__ENV.RETRIES || 30);
 // One counter per outcome: tagged sub-metrics reach the summary only when a threshold names them.
 const outcomes = { 201: new Counter("created"), 409: new Counter("conflict"), 503: new Counter("busy") };
 const other = new Counter("other");
+const retried = new Counter("retried");
 
 export const options = {
   scenarios: {
@@ -40,17 +45,24 @@ function uuid4() {
 export default function () {
   if (__ENV.START_AT && __ITER === 0) sleep(Math.max(0, Number(__ENV.START_AT) - Date.now()) / 1000);
   const url = urls[__ITER % urls.length];
-  const response = http.post(
-    `${url}/bookings`,
-    JSON.stringify({
-      hotel_id: __ENV.HOTEL_ID,
-      room_id: __ENV.ROOM_ID,
-      guest_id: uuid4(),
-      check_in: __ENV.CHECK_IN || "2027-03-01",
-      check_out: __ENV.CHECK_OUT || "2027-03-02",
-    }),
-    { headers: { "content-type": "application/json", "idempotency-key": uuid4() } },
-  );
+  const body = JSON.stringify({
+    hotel_id: __ENV.HOTEL_ID,
+    room_id: __ENV.ROOM_ID,
+    guest_id: uuid4(),
+    check_in: __ENV.CHECK_IN || "2027-03-01",
+    check_out: __ENV.CHECK_OUT || "2027-03-02",
+  });
+  const params = { headers: { "content-type": "application/json", "idempotency-key": uuid4() } };
+  let response;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) {
+      retried.add(1);
+      sleep(Math.random() * Math.min(2, 0.1 * 2 ** attempt)); // full jitter, capped at 2 s
+    }
+    response = http.post(`${url}/bookings`, body, params);
+    const again = response.status === 503 || (response.status === 409 && response.headers["Retry-After"]);
+    if (!again) break;
+  }
   (outcomes[response.status] || other).add(1);
   if (!outcomes[response.status]) console.error(`unexpected ${response.status}: ${response.body}`);
 }
@@ -58,7 +70,7 @@ export default function () {
 // Counts by outcome, which is all the demo checks.
 export function handleSummary(data) {
   const counts = {};
-  for (const name of ["created", "conflict", "busy", "other"]) {
+  for (const name of ["created", "conflict", "busy", "other", "retried"]) {
     counts[name] = data.metrics[name] ? data.metrics[name].values.count : 0;
   }
   return { [__ENV.SUMMARY || "summary.json"]: JSON.stringify(counts, null, 2) };

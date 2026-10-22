@@ -60,7 +60,7 @@ To bring search up once access is granted:
 
    ```sh
    aws --profile booking-admin --region us-east-1 bedrock get-foundation-model-availability \
-     --model-id amazon.titan-embed-text-v2 --query authorizationStatus --output text
+     --model-id amazon.titan-embed-text-v2:0 --query authorizationStatus --output text
    ```
 
    It must print `AUTHORIZED`.

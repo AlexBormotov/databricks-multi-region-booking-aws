@@ -51,13 +51,17 @@ GOLD_QUERIES = {
 
 
 def contention(summaries: list[dict], attempts: int) -> dict:
-    """Adds up the k6 summaries; exactly one attempt may win and every attempt must be answered."""
+    """Adds up the k6 summaries; exactly one attempt may win, every other one must be refused, and
+    every attempt must be answered. `retried` counts the requests k6 sent again; not an outcome."""
     names = ("created", "conflict", "busy", "other")
     total = {name: sum(s[name] for s in summaries) for name in names}
     answered = sum(total.values())
+    total["retried"] = sum(s.get("retried", 0) for s in summaries)
     failures = []
     if total["created"] != 1:
         failures.append(f"{total['created']} bookings created, expected exactly 1")
+    if total["busy"]:
+        failures.append(f"{total['busy']} attempts still answered 503 after every retry")
     if total["other"]:
         failures.append(f"{total['other']} responses were neither 201, 409 nor 503")
     if answered != attempts:

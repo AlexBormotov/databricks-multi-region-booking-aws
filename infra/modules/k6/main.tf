@@ -51,12 +51,13 @@ resource "aws_iam_instance_profile" "k6" {
 }
 
 resource "aws_instance" "k6" {
-  count                                = local.enabled
-  ami                                  = data.aws_ssm_parameter.al2023_arm64.insecure_value
-  instance_type                        = var.instance_type
-  iam_instance_profile                 = aws_iam_instance_profile.k6[0].name
-  instance_initiated_shutdown_behavior = "terminate"
+  count                = local.enabled
+  ami                  = data.aws_ssm_parameter.al2023_arm64.insecure_value
+  instance_type        = var.instance_type
+  iam_instance_profile = aws_iam_instance_profile.k6[0].name
 
+  # A one-time spot instance cannot be stopped, so the shutdown in user_data terminates it.
+  # Setting instance_initiated_shutdown_behavior is refused for spot instances.
   instance_market_options {
     market_type = "spot"
     spot_options {
