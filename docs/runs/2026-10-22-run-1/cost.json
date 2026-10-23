@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-22",
+  "aws_tagged_usd": 0.04,
+  "aws_account_usd": 0.12,
+  "databricks_usd": null,
+  "budget_usd": 7.0,
+  "within_budget": true,
+  "tagged_by_service": {
+    "Amazon Elastic Compute Cloud - Compute": 0.02,
+    "Amazon Kinesis": 0.02,
+    "Amazon API Gateway": 0.01
+  },
+  "account_by_service": {
+    "AWS Key Management Service": 0.06,
+    "Amazon Elastic Compute Cloud - Compute": 0.02,
+    "Amazon Kinesis": 0.02,
+    "Amazon API Gateway": 0.01,
+    "Amazon DynamoDB": 0.01
+  },
+  "databricks_by_sku": {}
+}

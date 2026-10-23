@@ -1,0 +1,40 @@
+{
+  "guests": [
+    201,
+    201,
+    201,
+    201
+  ],
+  "bookings_by_api_and_status": {
+    "https://on7j27525g.execute-api.us-east-1.amazonaws.com": {
+      "201": 90,
+      "409": 10
+    },
+    "https://6mvzcbeuo3.execute-api.us-east-2.amazonaws.com": {
+      "409": 20,
+      "201": 80
+    }
+  },
+  "replay_status": 200,
+  "cancel_statuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    409,
+    200,
+    200,
+    200,
+    200,
+    200
+  ],
+  "failures": [],
+  "seconds": 16.7
+}
