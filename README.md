@@ -27,21 +27,14 @@ occupancy and revenue analytics, with exactly-once into Delta. The whole stack c
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph clients[Clients]
-    k6["k6 on EC2 spot<br/>us-east-1, us-east-2, us-west-2"]
-  end
+flowchart TB
+  k6["k6 on EC2 spot<br/>us-east-1, us-east-2, us-west-2"]
 
   subgraph e1[us-east-1]
     api1[API Gateway + Lambda]
     saga1[Step Functions saga]
     t1[(DynamoDB MRSC replica)]
-    ev[events Lambda]
-    kin[Kinesis]
-    fh[Firehose]
-    s3[(S3 landing)]
     kb[Bedrock KB<br/>S3 Vectors]
-    gus[(guests-us)]
   end
 
   subgraph e2[us-east-2]
@@ -50,30 +43,32 @@ flowchart LR
     t2[(DynamoDB MRSC replica)]
   end
 
-  subgraph w2[us-west-2]
-    wit[MRSC witness]
+  subgraph pii[Guest PII, by declared residence]
+    direction LR
+    gus[(guests-us<br/>us-east-1)]
+    geu[(guests-eu<br/>eu-central-1)]
   end
 
-  subgraph eu[eu-central-1]
-    geu[(guests-eu)]
+  subgraph stream[Change stream, us-east-1]
+    direction LR
+    ev[events Lambda] --> kin[Kinesis] --> fh[Firehose] --> s3[(S3 landing)]
   end
 
   subgraph dbx[Databricks on AWS, us-east-1]
-    al[Auto Loader] --> br[bronze] --> sv[silver<br/>dedup, AUTO CDC, quarantine] --> gd[gold<br/>marts, KPIs]
-    gd --> dash[AI/BI dashboard]
+    direction LR
+    al[Auto Loader] --> br[bronze] --> sv[silver<br/>dedup, AUTO CDC, quarantine] --> gd[gold<br/>marts, KPIs] --> dash[AI/BI dashboard]
   end
 
   k6 --> api1 & api2
-  api1 --> t1
-  api2 --> t2
-  t1 <-->|strongly consistent| t2
-  t1 & t2 -.- wit
+  api1 --> kb
   api1 --> saga1 --> t1
   api2 --> saga2 --> t2
-  api1 --> gus & geu
-  api2 --> gus & geu
-  api1 --> kb
-  t1 -->|stream, both regions' writes| ev --> kin --> fh --> s3 --> al
+  api1 --> t1
+  api2 --> t2
+  t1 <-->|"strongly consistent<br/>witness in us-west-2"| t2
+  api1 & api2 -.->|PII| pii
+  t1 -->|both regions' writes| stream
+  stream --> dbx
 ```
 
 The booking store is four DynamoDB tables replicated with strong consistency between us-east-1 and
