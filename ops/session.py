@@ -179,7 +179,8 @@ def main(argv=None) -> None:
         bundle(["deploy"], check=True)
         # The tables outlive `make down`, which empties the landing bucket. Without a reset, the
         # last session's bookings meet this one's on the same seeded room-nights and fail gold.
-        bundle(["run", "lakehouse", "--full-refresh-all"], check=True)
+        # The seeded rooms reach the landing bucket and may already have started an update.
+        bundle(["run", "lakehouse", "--full-refresh-all", "--restart"], check=True)
     elif args.command == "destroy-bundle":
         bundle(["destroy", "--auto-approve"], check=True)
     elif args.command == "validate-bundle":
