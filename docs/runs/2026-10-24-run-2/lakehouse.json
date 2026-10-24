@@ -1,0 +1,117 @@
+{
+  "live_regions": [
+    "us-east-1",
+    "us-east-2"
+  ],
+  "run": "{\n  \"task_outputs\": [\n    {\n      \"TaskKey\": \"cdc_matches\",\n      \"Output\": {},\n      \"EndTime\": 1792840116788\n    },\n    {\n      \"TaskKey\": \"cdc_oracle\",\n      \"Output\": {},\n      \"EndTime\": 1792840113701\n    },\n    {\n      \"TaskKey\": \"gold_invariant\",\n      \"Output\": {},\n      \"EndTime\": 1792840113762\n    },\n    {\n      \"TaskKey\": \"row_counts\",\n      \"Output\": {},\n      \"EndTime\": 1792840113780\n    }\n  ]\n}\n",
+  "by_region": [
+    {
+      "home_region": "us-east-1",
+      "status": "cancelled",
+      "bookings": "68"
+    },
+    {
+      "home_region": "us-east-1",
+      "status": "confirmed",
+      "bookings": "529"
+    },
+    {
+      "home_region": "us-east-1",
+      "status": "expired",
+      "bookings": "116"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "cancelled",
+      "bookings": "58"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "confirmed",
+      "bookings": "572"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "expired",
+      "bookings": "106"
+    }
+  ],
+  "conflict_rate_by_region": [
+    {
+      "home_region": "us-east-1",
+      "attempts": "1569",
+      "rejected": "856",
+      "conflict_rate": "0.5455704270235819"
+    },
+    {
+      "home_region": "us-east-2",
+      "attempts": "1631",
+      "rejected": "895",
+      "conflict_rate": "0.5487431023911711"
+    }
+  ],
+  "kpi_by_hotel": [
+    {
+      "hotel_id": "2eae05cf-96d0-4c5f-94c2-8c2e7c26847f",
+      "occupancy": "0.1160377358490566",
+      "room_revenue_usd": "108832.0"
+    },
+    {
+      "hotel_id": "301850c5-a38f-4547-923a-736994e3bf91",
+      "occupancy": "0.12971698113207547",
+      "room_revenue_usd": "44869.53"
+    },
+    {
+      "hotel_id": "5de00997-84b5-4818-82d8-7208d86f40f6",
+      "occupancy": "0.12830188679245283",
+      "room_revenue_usd": "77981.22"
+    },
+    {
+      "hotel_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+      "occupancy": "0.12169811320754717",
+      "room_revenue_usd": "135044.0"
+    },
+    {
+      "hotel_id": "66d22876-72fd-4202-aa96-fb1a14a0f9e7",
+      "occupancy": "0.11933962264150944",
+      "room_revenue_usd": "107260.0"
+    },
+    {
+      "hotel_id": "72158370-d269-49a5-ae65-8f33fe3b890b",
+      "occupancy": "0.12641509433962264",
+      "room_revenue_usd": "103171.73"
+    },
+    {
+      "hotel_id": "930d6eaf-14f4-433f-be7d-1bfbc7a2ea20",
+      "occupancy": "0.11037735849056604",
+      "room_revenue_usd": "83950.19"
+    },
+    {
+      "hotel_id": "9d1de2a0-5d15-4a2f-b2ee-4e4519f9919c",
+      "occupancy": "0.1099056603773585",
+      "room_revenue_usd": "86924.64"
+    },
+    {
+      "hotel_id": "a09f76b5-a170-4338-b926-3059f28c105d",
+      "occupancy": "0.1259433962264151",
+      "room_revenue_usd": "147625.5"
+    },
+    {
+      "hotel_id": "bd87a865-57b6-4b7e-bfea-a1551a28f7b3",
+      "occupancy": "0.13160377358490566",
+      "room_revenue_usd": "63001.53"
+    },
+    {
+      "hotel_id": "ca02135e-92b1-43f2-8ede-0d7ac3baea9e",
+      "occupancy": "0.1259433962264151",
+      "room_revenue_usd": "99096.36"
+    },
+    {
+      "hotel_id": "cc4169a3-ae3a-4b7f-9fe0-1893f3aed0b6",
+      "occupancy": "0.11556603773584906",
+      "room_revenue_usd": "95756.07"
+    }
+  ],
+  "failures": [],
+  "seconds": 290.0
+}

@@ -1,0 +1,12 @@
+{
+  "bucket": "booking-landing-<account-id>",
+  "keys": [
+    "events/region=us-east-1/backfill/part-0000.json.gz",
+    "events/region=us-east-2/backfill/part-0000.json.gz",
+    "reference/fx_rates.json.gz",
+    "reference/hotels.json.gz",
+    "reference/rooms.json.gz"
+  ],
+  "failures": [],
+  "seconds": 1.8
+}

@@ -1,0 +1,161 @@
+{
+  "live_regions": [
+    "us-east-1",
+    "us-east-2"
+  ],
+  "run": "{\n  \"task_outputs\": [\n    {\n      \"TaskKey\": \"cdc_matches\",\n      \"Output\": {},\n      \"EndTime\": 1792866951059\n    },\n    {\n      \"TaskKey\": \"cdc_oracle\",\n      \"Output\": {},\n      \"EndTime\": 1792866948175\n    },\n    {\n      \"TaskKey\": \"data_quality\",\n      \"Output\": {},\n      \"EndTime\": 1792866949618\n    },\n    {\n      \"TaskKey\": \"gold_invariant\",\n      \"Output\": {},\n      \"EndTime\": 1792866948734\n    },\n    {\n      \"TaskKey\": \"row_counts\",\n      \"Output\": {},\n      \"EndTime\": 1792866948274\n    }\n  ]\n}\n",
+  "by_region": [
+    {
+      "home_region": "us-east-1",
+      "status": "cancelled",
+      "bookings": "69"
+    },
+    {
+      "home_region": "us-east-1",
+      "status": "confirmed",
+      "bookings": "532"
+    },
+    {
+      "home_region": "us-east-1",
+      "status": "expired",
+      "bookings": "116"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "cancelled",
+      "bookings": "58"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "confirmed",
+      "bookings": "567"
+    },
+    {
+      "home_region": "us-east-2",
+      "status": "expired",
+      "bookings": "107"
+    }
+  ],
+  "conflict_rate_by_region": [
+    {
+      "home_region": "us-east-1",
+      "attempts": "1481",
+      "rejected": "764",
+      "conflict_rate": "0.5158676569885212"
+    },
+    {
+      "home_region": "us-east-2",
+      "attempts": "1549",
+      "rejected": "817",
+      "conflict_rate": "0.5274370561652679"
+    }
+  ],
+  "kpi_by_hotel": [
+    {
+      "hotel_id": "2eae05cf-96d0-4c5f-94c2-8c2e7c26847f",
+      "occupancy": "0.11462264150943396",
+      "room_revenue_usd": "107312.0"
+    },
+    {
+      "hotel_id": "301850c5-a38f-4547-923a-736994e3bf91",
+      "occupancy": "0.1259433962264151",
+      "room_revenue_usd": "43211.05"
+    },
+    {
+      "hotel_id": "5de00997-84b5-4818-82d8-7208d86f40f6",
+      "occupancy": "0.12735849056603774",
+      "room_revenue_usd": "77576.94"
+    },
+    {
+      "hotel_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+      "occupancy": "0.12452830188679245",
+      "room_revenue_usd": "138320.0"
+    },
+    {
+      "hotel_id": "66d22876-72fd-4202-aa96-fb1a14a0f9e7",
+      "occupancy": "0.1169811320754717",
+      "room_revenue_usd": "105090.0"
+    },
+    {
+      "hotel_id": "72158370-d269-49a5-ae65-8f33fe3b890b",
+      "occupancy": "0.12783018867924528",
+      "room_revenue_usd": "103965.42"
+    },
+    {
+      "hotel_id": "930d6eaf-14f4-433f-be7d-1bfbc7a2ea20",
+      "occupancy": "0.1080188679245283",
+      "room_revenue_usd": "82147.89"
+    },
+    {
+      "hotel_id": "9d1de2a0-5d15-4a2f-b2ee-4e4519f9919c",
+      "occupancy": "0.11179245283018868",
+      "room_revenue_usd": "89116.54"
+    },
+    {
+      "hotel_id": "a09f76b5-a170-4338-b926-3059f28c105d",
+      "occupancy": "0.12641509433962264",
+      "room_revenue_usd": "148209.0"
+    },
+    {
+      "hotel_id": "bd87a865-57b6-4b7e-bfea-a1551a28f7b3",
+      "occupancy": "0.13160377358490566",
+      "room_revenue_usd": "63586.43"
+    },
+    {
+      "hotel_id": "ca02135e-92b1-43f2-8ede-0d7ac3baea9e",
+      "occupancy": "0.12830188679245283",
+      "room_revenue_usd": "101448.57"
+    },
+    {
+      "hotel_id": "cc4169a3-ae3a-4b7f-9fe0-1893f3aed0b6",
+      "occupancy": "0.11556603773584906",
+      "room_revenue_usd": "95897.36"
+    }
+  ],
+  "data_quality": [
+    {
+      "dataset": "booking.bronze.events",
+      "expectation": "has_event_id",
+      "passed": "20424",
+      "failed": "0"
+    },
+    {
+      "dataset": "booking.bronze.events",
+      "expectation": "known_schema_version",
+      "passed": "20424",
+      "failed": "0"
+    },
+    {
+      "dataset": "booking.gold.fact_room_night",
+      "expectation": "fx_rate_known",
+      "passed": "200160",
+      "failed": "0"
+    },
+    {
+      "dataset": "booking.gold.fact_room_night",
+      "expectation": "one_confirmed_booking_per_room_night",
+      "passed": "200160",
+      "failed": "19"
+    },
+    {
+      "dataset": "booking.silver.events_dedup",
+      "expectation": "known_currency",
+      "passed": "10820",
+      "failed": "0"
+    },
+    {
+      "dataset": "booking.silver.events_dedup",
+      "expectation": "nights_inside_stay",
+      "passed": "10820",
+      "failed": "0"
+    },
+    {
+      "dataset": "booking.silver.events_dedup",
+      "expectation": "versioned_state_event",
+      "passed": "10820",
+      "failed": "0"
+    }
+  ],
+  "failures": [],
+  "seconds": 345.3
+}

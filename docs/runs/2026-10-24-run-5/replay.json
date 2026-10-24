@@ -1,0 +1,61 @@
+{
+  "replay_id": "20261024T183659",
+  "sent": 9264,
+  "bronze_before": {
+    "original": 4632,
+    "replayed": 0,
+    "silver_duplicates": 0
+  },
+  "bronze_after": {
+    "original": 4632,
+    "replayed": 9264,
+    "silver_duplicates": 0
+  },
+  "compared_unchanged": true,
+  "before": {
+    "booking.silver.events_dedup": {
+      "rows": "4632",
+      "digest": "-234280765802478902652"
+    },
+    "booking.silver.bookings": {
+      "rows": "1449",
+      "digest": "172510299979623539065"
+    },
+    "booking.gold.fact_booking": {
+      "rows": "1449",
+      "digest": "119781580124586257879"
+    },
+    "booking.gold.fact_room_night": {
+      "rows": "25440",
+      "digest": "1559150319247176000898"
+    },
+    "booking.gold.conflict_rate_by_region": {
+      "rows": "2",
+      "digest": "7764662129455573125"
+    }
+  },
+  "after": {
+    "booking.silver.events_dedup": {
+      "rows": "4632",
+      "digest": "-234280765802478902652"
+    },
+    "booking.silver.bookings": {
+      "rows": "1449",
+      "digest": "172510299979623539065"
+    },
+    "booking.gold.fact_booking": {
+      "rows": "1449",
+      "digest": "119781580124586257879"
+    },
+    "booking.gold.fact_room_night": {
+      "rows": "25440",
+      "digest": "1559150319247176000898"
+    },
+    "booking.gold.conflict_rate_by_region": {
+      "rows": "2",
+      "digest": "7764662129455573125"
+    }
+  },
+  "failures": [],
+  "seconds": 200.4
+}

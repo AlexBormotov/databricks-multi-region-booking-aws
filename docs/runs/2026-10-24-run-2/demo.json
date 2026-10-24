@@ -1,0 +1,26 @@
+{
+  "backfill": {
+    "passed": true,
+    "failures": []
+  },
+  "traffic": {
+    "passed": true,
+    "failures": []
+  },
+  "k6": {
+    "passed": true,
+    "failures": []
+  },
+  "invariant": {
+    "passed": true,
+    "failures": []
+  },
+  "mrsc": {
+    "passed": true,
+    "failures": []
+  },
+  "lakehouse": {
+    "passed": true,
+    "failures": []
+  }
+}

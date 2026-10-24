@@ -33,7 +33,7 @@ export const options = {
       executor: "shared-iterations",
       vus: Math.min(Number(__ENV.VUS || 200), attempts),
       iterations: attempts,
-      maxDuration: "5m",
+      maxDuration: "8m", // the demo waits 10 min for the summaries; run 5 ran out at 5 min
     },
   },
   thresholds: Object.fromEntries(OTHER_STATUSES.map((s) => [`other{status:${s}}`, ["count>=0"]])),
