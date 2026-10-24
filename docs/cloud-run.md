@@ -104,7 +104,10 @@ The trial lasts 14 days from signup, so sign up only once run 1 is green and eve
    `booking-lakehouse-<account-id>`, which the probe also creates.
 5. **Run 2.** Actions, `cloud-session`, scale `small`. With `DATABRICKS_HOST` set, `make up` also
    applies `databricks_uc` and deploys the bundle, and `make demo` adds the `lakehouse` step: it
-   waits for Firehose, runs `booking-refresh` and records gold by region, conflict rates and KPIs.
+   waits for Firehose, runs `booking-refresh` and records gold by region, conflict rates, KPIs and
+   the expectation counts from the pipeline's event log. Then the `replay` step delivers every
+   landed event again, twice and shuffled, runs `booking-refresh` once more, and checks that bronze
+   holds every copy while silver and gold do not change.
 6. **Cost report**, the next day, with the three values exported: `make cost-report DATE=<date>`
    adds the Databricks share from `system.billing.usage`. If the system tables are off, read the
    day's usage from the account console instead.

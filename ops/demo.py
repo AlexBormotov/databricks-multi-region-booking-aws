@@ -8,6 +8,7 @@ exit code is non-zero if any step failed.
 """
 
 import argparse
+import gzip
 import json
 import os
 import random
@@ -47,6 +48,18 @@ GOLD_QUERIES = {
     "kpi_by_hotel": "SELECT hotel_id, sum(sold_room_nights) / sum(available_room_nights) "
     "AS occupancy, round(sum(room_revenue_usd), 2) AS room_revenue_usd "
     "FROM booking.gold.kpi_hotel_daily GROUP BY hotel_id ORDER BY hotel_id",
+    "data_quality": "SELECT dataset, expectation, sum(passed_records) AS passed, "
+    "sum(failed_records) AS failed FROM booking.gold.data_quality "
+    "GROUP BY dataset, expectation ORDER BY dataset, expectation",
+}
+# The tables the replay must leave unchanged, and the columns that identify a row's content. Money
+# is rounded, so a different summation order cannot change the digest.
+FINGERPRINT = {
+    "booking.silver.events_dedup": "event_id",
+    "booking.silver.bookings": "booking_id, status, version",
+    "booking.gold.fact_booking": "booking_id, status, amount_minor",
+    "booking.gold.fact_room_night": "room_id, night, confirmed_bookings, round(revenue_usd, 4)",
+    "booking.gold.conflict_rate_by_region": "home_region, attempts, rejected",
 }
 
 
@@ -344,6 +357,76 @@ def lakehouse(ctx, flush_timeout_s: int = 300) -> dict:
             "failures": failures}  # fmt: skip
 
 
+def replayed(lines: list[bytes], rng: random.Random) -> list[bytes]:
+    """Every event twice, in a shuffled order: duplicates and out-of-order delivery at once."""
+    copies = lines * 2
+    rng.shuffle(copies)
+    return copies
+
+
+def fingerprint(warehouse_id: str) -> dict:
+    sql = " UNION ALL ".join(
+        f"SELECT '{table}' AS t, count(*) AS rows, "
+        f"sum(cast(xxhash64({columns}) AS decimal(38, 0))) AS digest FROM {table}"
+        for table, columns in FINGERPRINT.items()
+    )
+    rows = statement(sql, warehouse_id)
+    return {r["t"]: {"rows": r["rows"], "digest": r["digest"]} for r in rows}
+
+
+def bronze_rows(warehouse_id: str, replay_id: str) -> dict:
+    sql = (
+        "SELECT count_if(_source_file NOT LIKE '%/replay/%') AS original, "
+        f"count_if(_source_file LIKE '%/replay/{replay_id}/%') AS replayed, "
+        "(SELECT count(*) - count(DISTINCT event_id) FROM booking.silver.events_dedup) "
+        "AS silver_duplicates FROM booking.bronze.events"
+    )
+    [row] = statement(sql, warehouse_id)
+    return {name: int(value) for name, value in row.items()}
+
+
+def replay(ctx) -> dict:
+    """Exactly once into Delta, in the cloud: every event landed so far is delivered again, twice
+    and shuffled, and booking-refresh runs once more. Bronze keeps every copy; silver must hold
+    each event once. Silver and gold must not change at all, a check made only when no new live
+    event reached bronze meanwhile (a hold expiring late would change them legitimately)."""
+    s3, warehouse = boto3.client("s3", region_name=HOME), ctx["warehouse_id"]
+    replay_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    before, rows_before = fingerprint(warehouse), bronze_rows(warehouse, replay_id)
+    lines: dict[str, list[bytes]] = {}
+    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=ctx["landing"], Prefix="events/")
+    for key in [o["Key"] for page in pages for o in page.get("Contents", [])]:
+        if "/replay/" in key:
+            continue
+        body = gzip.decompress(s3.get_object(Bucket=ctx["landing"], Key=key)["Body"].read())
+        region = key.split("/")[1].removeprefix("region=")
+        lines.setdefault(region, []).extend(line for line in body.splitlines() if line.strip())
+    rng, sent = random.Random(ctx["seed"]), 0
+    for region, events in sorted(lines.items()):
+        copies = replayed(events, rng)
+        s3.put_object(
+            Bucket=ctx["landing"],
+            Key=f"events/region={region}/replay/{replay_id}/part-0000.json.gz",
+            Body=gzip.compress(b"\n".join(copies) + b"\n"),
+        )
+        sent += len(copies)
+    run = bundle(["run", "booking_refresh", "--output", "json"], capture_output=True, text=True)
+    after, rows_after = fingerprint(warehouse), bronze_rows(warehouse, replay_id)
+    failures = []
+    if run.returncode:
+        failures.append(f"booking-refresh failed: {run.stderr.strip()[-2000:]}")
+    if rows_after["replayed"] != sent:
+        failures.append(f"bronze holds {rows_after['replayed']} replayed rows; {sent} were sent")
+    if rows_after["silver_duplicates"]:
+        failures.append(f"silver.events_dedup holds {rows_after['silver_duplicates']} duplicates")
+    compared = rows_after["original"] == rows_before["original"]
+    if compared and (changed := [t for t in FINGERPRINT if before[t] != after[t]]):
+        failures.append(f"the replay changed {changed}")
+    return {"replay_id": replay_id, "sent": sent, "bronze_before": rows_before,
+            "bronze_after": rows_after, "compared_unchanged": compared, "before": before,
+            "after": after, "failures": failures}  # fmt: skip
+
+
 STEPS = {
     "backfill": backfill,
     "traffic": traffic,
@@ -401,7 +484,8 @@ def main(argv=None) -> None:
 
     if args.command == "run":
         ctx = context(args.seed, args.scale)
-        steps = STEPS | ({"lakehouse": lakehouse} if ctx["warehouse_id"] else {})
+        lake = {"lakehouse": lakehouse, "replay": replay} if ctx["warehouse_id"] else {}
+        steps = STEPS | lake
         if not args.search:
             del steps["search"]
         summary = run(ctx, steps)
