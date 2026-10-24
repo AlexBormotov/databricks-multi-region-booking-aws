@@ -99,7 +99,9 @@ The trial lasts 14 days from signup, so sign up only once run 1 is green and eve
    the shell. It applies only the persistent `landing` and `databricks_uc` units, then runs
    `databricks bundle validate` against the workspace. It checks that the trial accepts a storage
    credential on our bucket (plan D10). Nothing it creates costs anything while idle. If the
-   external location is refused, stop: the volume fallback (plan D10) is written first.
+   external location is refused, stop: the volume fallback (plan D10) is written first. The express
+   trial's metastore has no storage root, so the catalog keeps its managed tables in the bucket
+   `booking-lakehouse-<account-id>`, which the probe also creates.
 5. **Run 2.** Actions, `cloud-session`, scale `small`. With `DATABRICKS_HOST` set, `make up` also
    applies `databricks_uc` and deploys the bundle, and `make demo` adds the `lakehouse` step: it
    waits for Firehose, runs `booking-refresh` and records gold by region, conflict rates and KPIs.
