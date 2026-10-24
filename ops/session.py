@@ -5,7 +5,7 @@ python -m ops.session due                      exit 0 if the session has expired
 python -m ops.session expiry-clear
 python -m ops.session prepare --seed 7 --scale small [--no-search]
 python -m ops.session empty-landing
-python -m ops.session deploy-bundle            the lakehouse bundle, run 2 only
+python -m ops.session deploy-bundle            the lakehouse bundle, its tables reset
 python -m ops.session destroy-bundle
 python -m ops.session validate-bundle
 """
@@ -177,6 +177,9 @@ def main(argv=None) -> None:
             print("deleted", empty_bucket(boto3.client("s3", region_name=HOME), bucket), "objects")
     elif args.command == "deploy-bundle":
         bundle(["deploy"], check=True)
+        # The tables outlive `make down`, which empties the landing bucket. Without a reset, the
+        # last session's bookings meet this one's on the same seeded room-nights and fail gold.
+        bundle(["run", "lakehouse", "--full-refresh-all"], check=True)
     elif args.command == "destroy-bundle":
         bundle(["destroy", "--auto-approve"], check=True)
     elif args.command == "validate-bundle":
