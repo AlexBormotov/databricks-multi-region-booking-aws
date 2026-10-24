@@ -1,6 +1,6 @@
 # Unity Catalog over the landing bucket (spec 4, plan D10): a storage credential on an IAM role, an
 # external location, the `booking` catalog with its three schemas, and the SQL warehouse for the
-# job's checks and the dashboard. Persistent (plan D11): none of it costs anything while idle, and
+# job's checks and the dashboard. The catalog keeps its managed tables in a bucket of its own. Persistent (plan D11): none of it costs anything while idle, and
 # a stopped serverless warehouse bills nothing.
 
 data "aws_caller_identity" "this" {}
@@ -43,10 +43,53 @@ resource "aws_iam_role_policy" "landing" {
   policy = data.databricks_aws_unity_catalog_policy.landing.json
 }
 
+# The express trial's metastore has no storage root, so the catalog needs one. A bucket apart from
+# landing, which `make down` empties. force_destroy: `make destroy-persistent` drops the tables too.
+resource "aws_s3_bucket" "lakehouse" {
+  bucket        = "booking-lakehouse-${data.aws_caller_identity.this.account_id}"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_public_access_block" "lakehouse" {
+  bucket                  = aws_s3_bucket.lakehouse.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "lakehouse" {
+  bucket = aws_s3_bucket.lakehouse.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "lakehouse" {
+  role = aws_iam_role.landing.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation",
+        "s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts", "s3:AbortMultipartUpload",
+      ]
+      Resource = [aws_s3_bucket.lakehouse.arn, "${aws_s3_bucket.lakehouse.arn}/*"]
+    }]
+  })
+}
+
 # Creating the external location validates access through the role; IAM needs a moment first.
 resource "time_sleep" "iam" {
   depends_on      = [aws_iam_role_policy.landing]
   create_duration = "30s"
+  # Waits again when the lakehouse grant is added to a role that already exists.
+  triggers = {
+    lakehouse = aws_iam_role_policy.lakehouse.id
+  }
 }
 
 resource "databricks_external_location" "landing" {
@@ -57,11 +100,20 @@ resource "databricks_external_location" "landing" {
   depends_on      = [time_sleep.iam]
 }
 
-# Managed tables live in the workspace's default storage, not in the landing bucket that
-# `make down` empties.
+resource "databricks_external_location" "lakehouse" {
+  name            = "booking-lakehouse"
+  url             = "s3://${aws_s3_bucket.lakehouse.bucket}"
+  credential_name = databricks_storage_credential.landing.id
+  depends_on      = [time_sleep.iam]
+}
+
 resource "databricks_catalog" "booking" {
   name    = "booking"
   comment = "Hotel booking lakehouse."
+  # Spelled out with the trailing slash the API adds; the location's url gains it only after apply,
+  # which the provider reports as an inconsistent plan.
+  storage_root = "s3://${aws_s3_bucket.lakehouse.bucket}/"
+  depends_on   = [databricks_external_location.lakehouse]
 }
 
 resource "databricks_schema" "layer" {
