@@ -108,8 +108,8 @@ resource "databricks_external_location" "lakehouse" {
 }
 
 resource "databricks_catalog" "booking" {
-  name         = "booking"
-  comment      = "Hotel booking lakehouse."
+  name    = "booking"
+  comment = "Hotel booking lakehouse."
   # Spelled out with the trailing slash the API adds; the location's url gains it only after apply,
   # which the provider reports as an inconsistent plan.
   storage_root = "s3://${aws_s3_bucket.lakehouse.bucket}/"
