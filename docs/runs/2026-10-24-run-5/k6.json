@@ -1,0 +1,46 @@
+{
+  "run_id": "20261024T182434",
+  "room": {
+    "room_id": "fc132d0d-113d-417d-b0cb-c97d0fef7928",
+    "hotel_id": "cc4169a3-ae3a-4b7f-9fe0-1893f3aed0b6",
+    "room_type": "deluxe",
+    "base_rate_minor": 34484
+  },
+  "night": "2027-03-01",
+  "by_region": {
+    "us-east-1": {
+      "created": 1,
+      "conflict": 333,
+      "busy": 0,
+      "other": 0,
+      "retried": 1237,
+      "other_by_status": {}
+    },
+    "us-east-2": {
+      "created": 0,
+      "conflict": 203,
+      "busy": 0,
+      "other": 0,
+      "retried": 1539,
+      "other_by_status": {}
+    },
+    "us-west-2": {
+      "created": 0,
+      "conflict": 240,
+      "busy": 0,
+      "other": 0,
+      "retried": 1461,
+      "other_by_status": {}
+    }
+  },
+  "created": 1,
+  "conflict": 776,
+  "busy": 0,
+  "other": 0,
+  "retried": 4237,
+  "attempts": 1000,
+  "failures": [
+    "777 of 1000 attempts answered"
+  ],
+  "seconds": 398.2
+}

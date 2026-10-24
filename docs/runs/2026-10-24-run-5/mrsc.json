@@ -1,0 +1,23 @@
+{
+  "room_night": "4263a127-8c95-4ac2-a480-aa48049fffad#2027-03-01",
+  "attempts": 100,
+  "outcomes": {
+    "us-east-1": {
+      "lost": 49,
+      "won": 1
+    },
+    "us-east-2": {
+      "lost": 50
+    }
+  },
+  "winner": [
+    "us-east-1",
+    "0a84bea9-9748-4cb6-8d25-600201ef1f47"
+  ],
+  "holders": {
+    "us-east-1": "0a84bea9-9748-4cb6-8d25-600201ef1f47",
+    "us-east-2": "0a84bea9-9748-4cb6-8d25-600201ef1f47"
+  },
+  "failures": [],
+  "seconds": 1.2
+}
