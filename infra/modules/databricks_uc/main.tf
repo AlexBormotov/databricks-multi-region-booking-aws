@@ -130,3 +130,13 @@ resource "databricks_sql_endpoint" "demo" {
   enable_serverless_compute = true
   warehouse_type            = "PRO"
 }
+
+# The catalog is owned by the CI service principal, so people in the workspace could neither see
+# it nor read the dashboard's tables. Read only: the pipeline writes as its owner.
+resource "databricks_grants" "booking" {
+  catalog = databricks_catalog.booking.name
+  grant {
+    principal  = "account users"
+    privileges = ["BROWSE", "USE_CATALOG", "USE_SCHEMA", "SELECT"]
+  }
+}
