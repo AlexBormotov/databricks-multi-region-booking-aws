@@ -34,6 +34,20 @@
       "queryLines": [
         "SELECT home_region, attempts - rejected AS won, rejected, conflict_rate FROM booking.gold.conflict_rate_by_region"
       ]
+    },
+    {
+      "name": "quality",
+      "displayName": "Expectations",
+      "queryLines": [
+        "SELECT concat(dataset, ' / ', expectation) AS expectation, sum(passed_records) AS passed, sum(failed_records) AS failed FROM booking.gold.data_quality GROUP BY ALL"
+      ]
+    },
+    {
+      "name": "quarantine",
+      "displayName": "Quarantine",
+      "queryLines": [
+        "SELECT rule, count(*) AS quarantined_rows FROM booking.silver.quarantine_events GROUP BY rule"
+      ]
     }
   ],
   "pages": [
@@ -485,6 +499,175 @@
             "x": 3,
             "y": 0,
             "width": 3,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "quality",
+      "displayName": "Data quality",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "failed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "quality",
+                  "fields": [
+                    {
+                      "name": "expectation",
+                      "expression": "`expectation`"
+                    },
+                    {
+                      "name": "failed",
+                      "expression": "`failed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "expectation",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "expectation"
+                },
+                "y": {
+                  "fieldName": "failed",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "failed"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rows failing each expectation"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "passed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "quality",
+                  "fields": [
+                    {
+                      "name": "expectation",
+                      "expression": "`expectation`"
+                    },
+                    {
+                      "name": "passed",
+                      "expression": "`passed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "expectation",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "expectation"
+                },
+                "y": {
+                  "fieldName": "passed",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "passed"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rows passing each expectation"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "quarantined",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "quarantine",
+                  "fields": [
+                    {
+                      "name": "rule",
+                      "expression": "`rule`"
+                    },
+                    {
+                      "name": "quarantined_rows",
+                      "expression": "`quarantined_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "rule",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "rule"
+                },
+                "y": {
+                  "fieldName": "quarantined_rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "quarantined_rows"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantined rows by rule"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
             "height": 6
           }
         }

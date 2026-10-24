@@ -1,9 +1,10 @@
+import random
 from datetime import date
 
 import pytest
 
 from ops.cost_report import report
-from ops.demo import contention, live_regions
+from ops.demo import contention, live_regions, replayed
 from ops.session import rows
 
 
@@ -65,3 +66,10 @@ def test_statement_rows_are_dicts_and_a_failed_statement_raises():
     ]
     with pytest.raises(RuntimeError, match="FAILED"):
         rows(statement_response("FAILED"))
+
+
+def test_replay_sends_every_event_twice_out_of_order():
+    lines = [f'{{"event_id": "{i}"}}'.encode() for i in range(20)]
+    copies = replayed(lines, random.Random(7))
+    assert sorted(copies) == sorted(lines * 2)
+    assert copies != lines * 2
