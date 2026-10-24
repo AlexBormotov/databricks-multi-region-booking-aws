@@ -21,7 +21,6 @@ cents. The brief is [`TASK.md`](TASK.md).
 |---|---|
 | Transactional | API Gateway + Lambda (Python 3.13) in us-east-1 and us-east-2, DynamoDB global tables with multi-region strong consistency (MRSC), a Step Functions saga |
 | Analytical | DynamoDB Streams -> Kinesis -> Firehose -> S3 -> Auto Loader -> Lakeflow Declarative Pipelines (medallion, AUTO CDC, expectations) -> Unity Catalog -> AI/BI dashboard |
-| Search | Bedrock Knowledge Base on S3 Vectors, filtered by live availability |
 | Platform | Terraform + Terragrunt over four regions, GitHub Actions with OIDC, Databricks Asset Bundles, one dev container for CI and contributors |
 
 ## Status
@@ -32,7 +31,6 @@ cents. The brief is [`TASK.md`](TASK.md).
 | Contention proof in the cloud | [run 1](docs/runs/2026-10-22-run-1/) and [run 2](docs/runs/2026-10-24-run-2/k6.json): 1000 attempts, 1 `201`, 999 `409`, 0 errors, no overlapping bookings |
 | Lakehouse in the cloud | [run 2](docs/runs/2026-10-24-run-2/lakehouse.json): every job check passed. [Run 5](docs/runs/2026-10-24-run-5/): the checks, the data-quality table and the replay passed |
 | Exactly once, replayed | [run 5 replay.json](docs/runs/2026-10-24-run-5/replay.json): 9264 duplicate events sent, 0 duplicates in silver, the fingerprints of five silver and gold tables unchanged |
-| Semantic search | code and infrastructure deployed in run 1; the account's Bedrock model access is still pending with AWS, so the corpus ingestion and the `/search` step are switched off (`SEARCH=off`, see [cloud-run.md](docs/cloud-run.md)) |
 | Demo video | in production |
 
 ## Architecture
@@ -45,7 +43,6 @@ flowchart TB
     api1[API Gateway + Lambda]
     saga1[Step Functions saga]
     t1[(DynamoDB MRSC replica)]
-    kb[Bedrock KB<br/>S3 Vectors]
   end
 
   subgraph e2[us-east-2]
@@ -71,7 +68,6 @@ flowchart TB
   end
 
   k6 --> api1 & api2
-  api1 --> kb
   api1 --> saga1 --> t1
   api2 --> saga2 --> t2
   api1 --> t1
@@ -99,15 +95,16 @@ reads and writes S3 buckets in us-east-1 through Unity Catalog external location
 | Ingest, deduplicate, order, check | Auto Loader + Lakeflow Declarative Pipelines, serverless, triggered | Hand-written Structured Streaming jobs; a continuous pipeline | Expectations, quarantine and `AUTO CDC ... SEQUENCE BY` are declared, not coded. A triggered serverless pipeline costs nothing between runs. |
 | Governance and BI | Unity Catalog + AI/BI dashboard | A separate BI tool | Grants, lineage and the dashboard sit next to the tables, and ship in the same bundle. |
 | Real cross-region contention | k6 on EC2 spot in three regions | A Lambda-based load generator | Lambda concurrency on the account was 10 per region; the generator would have throttled itself. Spot instances cost cents for the minutes they live. |
-| Semantic search | Bedrock Knowledge Base on S3 Vectors | OpenSearch Serverless | OpenSearch Serverless has a standing minimum cost; S3 Vectors costs nothing idle. |
 
 ## Following one booking through the system
 
 ### 1. The request: API Gateway and Lambda, in two regions
 
-Each region has the same HTTP API: `POST /bookings`, `POST /bookings/{id}/cancel`, `POST /guests`,
-`GET /availability` and `GET /search`, all served by the `booking-api` Lambda. Three more run the
+Each region has the same HTTP API: `POST /bookings`, `POST /bookings/{id}/cancel`, `POST /guests`
+and `GET /availability`, all served by the `booking-api` Lambda. Three more run the
 saga's steps, and `booking-events` reads the change stream.
+The screenshots were taken before the search was dropped ([ADR 6](docs/adr/0006-semantic-search-dropped.md)),
+so they still show its `GET /search` route and its Terraform state.
 
 <p>
 <img src="docs/screenshots/API-gateway.png" width="49%" alt="API Gateway routes of the booking API">
@@ -216,7 +213,7 @@ runs the pipeline, then four SQL checks and the data-quality table, then refresh
 - **bronze**: Auto Loader, append only. Expectations record, never drop: bronze is the raw record.
 - **silver**: one row per `event_id`
   ([`test_dedup_collapses_duplicates`](tests/lakehouse/test_silver.py)), then
-  `AUTO CDC ... SEQUENCE BY aggregate_version` restores per-booking order across regions
+  `AUTO CDC ... SEQUENCE BY version` restores per-booking order across regions
   ([`test_cdc_oracle_out_of_order`](tests/lakehouse/test_gold.py)). Rows that break a rule leave
   the marts and stay in `quarantine_events` with the rule they broke. `bookings_history` keeps every
   version (SCD type 2):
@@ -317,7 +314,7 @@ Terraform state per unit:
 
 | Region | Components |
 |---|---|
-| us-east-1 | `store` (MRSC tables), `api`, `saga`, `stream`, `landing`, `search`, `guests_vault`, `k6`, `databricks_uc`, `mrsc` (race table) |
+| us-east-1 | `store` (MRSC tables), `api`, `saga`, `stream`, `landing`, `guests_vault`, `k6`, `databricks_uc`, `mrsc` (race table) |
 | us-east-2 | `api`, `saga`, `k6` |
 | us-west-2 | `k6` (the MRSC witness is part of `store`) |
 | eu-central-1 | `guests_vault` |
@@ -350,7 +347,7 @@ make k6-local                     # the contention scenario against DynamoDB Loc
 make up && make demo && make down # a cloud session; CI runs the same targets
 ```
 
-The owner's one-time steps, and how to run with or without Bedrock and Databricks, are in
+The owner's one-time steps, and how to run with or without Databricks, are in
 [`docs/cloud-run.md`](docs/cloud-run.md).
 
 ## Cost
@@ -382,5 +379,12 @@ Each run found something local tests could not:
 - [ADR 1](docs/adr/0001-dsql-over-dynamodb.md): Aurora DSQL over DynamoDB global tables (superseded)
 - [ADR 2](docs/adr/0002-dynamodb-mrsc-booking-store.md): DynamoDB MRSC as the booking store, events
   from its change stream
+- [ADR 3](docs/adr/0003-exactly-once-in-delta.md): exactly once in Delta, dedup on `event_id`, then
+  AUTO CDC by version
+- [ADR 4](docs/adr/0004-pii-residency.md): guest PII stays in the vault of the guest's jurisdiction
+- [ADR 5](docs/adr/0005-time-zones-and-currencies.md): nights are hotel-local dates, money is minor
+  units in the hotel's currency
+- [ADR 6](docs/adr/0006-semantic-search-dropped.md): the semantic search is dropped
 
-The approved spec and plan are [`spec.md`](spec.md) and [`plan.md`](plan.md).
+The approved spec and plan are [`spec.md`](spec.md) and [`plan.md`](plan.md). They still describe
+the search; ADR 6 supersedes those parts.

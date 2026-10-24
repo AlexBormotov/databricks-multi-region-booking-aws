@@ -43,33 +43,6 @@ workflow. The plan is `plan.md`; the budget alert at $12 and the reaper are the 
 5. The next day, run `make cost-report DATE=<run date>` locally. It writes
    `artifacts/cost-<date>.json`. Each Cost Explorer call costs $0.01, and the report makes two.
 
-## Search on an account without Bedrock model access
-
-On 2026-10-21 run 1 stopped at the knowledge base ingestion: every Bedrock model on the account
-answers `Operation not allowed`, and `get-foundation-model-availability` reports
-`authorizationStatus: NOT_AUTHORIZED`. The block is on the account, not in the knowledge base role:
-the admin role gets the same answer.
-
-Until it is lifted, run `cloud-session` with `search` unticked. `make up SEARCH=off` still applies
-the search unit (the knowledge base, the S3 Vectors index, the corpus bucket), but skips the corpus
-ingestion; `make demo SEARCH=off` leaves out the `search` step. Everything else runs as usual.
-
-To bring search up once access is granted:
-
-1. Check that the embedding model answers:
-
-   ```sh
-   aws --profile booking-admin --region us-east-1 bedrock get-foundation-model-availability \
-     --model-id amazon.titan-embed-text-v2:0 --query authorizationStatus --output text
-   ```
-
-   It must print `AUTHORIZED`.
-2. Run `cloud-session` with `search` ticked (the default). `make up` ingests the corpus and
-   `make demo` runs the `search` step: every hotel `/search` returns has a free room, and a hotel
-   booked out for the stay is left out.
-
-Locally, the same is `make up` then `make demo`, with `SEARCH=on` or no `SEARCH` at all.
-
 ## If a run is interrupted
 
 `make down` runs with `if: always()`. If the runner itself died, run `make down` locally with the

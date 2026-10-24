@@ -6,7 +6,7 @@ import os
 import uuid
 from datetime import UTC, date, datetime
 
-from booking import guests, search, service, telemetry
+from booking import guests, service, telemetry
 from booking.handlers import runtime
 from booking.service import BookingRequest, Response
 
@@ -98,19 +98,6 @@ def _start_saga(booking_id: str) -> None:
         log.exception("saga start failed for %s; the hold will expire lazily", booking_id)
 
 
-def search_hotels(event) -> Response:
-    query = event.get("queryStringParameters") or {}
-    hotels = search.search(
-        runtime.store(),
-        runtime.client("bedrock-agent-runtime", search.KB_REGION),
-        os.environ["KNOWLEDGE_BASE_ID"],
-        query["q"],
-        date.fromisoformat(query["check_in"]),
-        date.fromisoformat(query["check_out"]),
-    )
-    return Response(200, {"hotels": hotels})
-
-
 def cancel_booking(event) -> Response:
     booking_id = uuid.UUID(event["pathParameters"]["booking_id"])
     return service.cancel(runtime.store(), booking_id, region=runtime.region())
@@ -121,5 +108,4 @@ ROUTES = {
     "GET /availability": get_availability,
     "POST /bookings": create_booking,
     "POST /bookings/{booking_id}/cancel": cancel_booking,
-    "GET /search": search_hotels,
 }

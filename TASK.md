@@ -1,7 +1,7 @@
 # AWS + Databricks: hotel booking across 3 regions
 A portfolio pet project for a Senior Data Engineer
 
-**Business problem:** zero double bookings under concurrent requests from different regions, plus occupancy and revenue analytics and a semantic hotel search. Hotels only: a "room × night" inventory is simpler than airline seats, while the locking problem is the same. The solution should follow what the world's leading sites such as Airbnb and Booking use. The main goal, though, is to show Data Engineer experience through ETL processes and data presentation in Databricks.
+**Business problem:** zero double bookings under concurrent requests from different regions, plus occupancy and revenue analytics. Hotels only: a "room × night" inventory is simpler than airline seats, while the locking problem is the same. The solution should follow what the world's leading sites such as Airbnb and Booking use. The main goal, though, is to show Data Engineer experience through ETL processes and data presentation in Databricks.
 
 **Transactional part:**
 
@@ -14,7 +14,6 @@ A portfolio pet project for a Senior Data Engineer
 **Analytical part:** outbox table → Kinesis → Firehose → S3 → Databricks Auto Loader → Lakeflow Declarative Pipelines (medallion, AUTO CDC, expectations) → Unity Catalog → Databricks SQL dashboards.
 
 - **Metrics:** occupancy, ADR, RevPAR, booking pace, lead time, cancellation rate, conflict rate by region.
-- **Vector part:** Bedrock Knowledge Base on S3 Vectors with descriptions and reviews. A query like "quiet seaside hotel with parking" plus a filter by real availability from DSQL. OpenSearch Serverless does not fit: its minimum charge is high.
 - **Orchestration:** Lakeflow Jobs for the warehouse, Step Functions for the saga.
 - **IaC and CI/CD:** Terraform + Terragrunt (multi-region), GitHub Actions with OIDC, Databricks Asset Bundles.
 
@@ -38,7 +37,6 @@ A portfolio pet project for a Senior Data Engineer
 | Transformations | Declarative Pipelines |
 | Orchestration | Lakeflow Jobs, Step Functions |
 | Data quality | Expectations |
-| Specialised DB | vector (Bedrock) |
 | BI | Databricks SQL |
 | IaC / CI | Terraform as multi-region via Terragrunt, GitHub Actions |
 
