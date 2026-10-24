@@ -50,23 +50,12 @@ dependency "vault_eu" {
   mock_outputs_allowed_terraform_commands = local.mock
 }
 
-dependency "search" {
-  config_path = "${local.live}/us-east-1/search"
-  mock_outputs = {
-    knowledge_base_id  = "MOCKKB0001"
-    knowledge_base_arn = "arn:aws:bedrock:us-east-1:123456789012:knowledge-base/MOCKKB0001"
-  }
-  mock_outputs_allowed_terraform_commands = local.mock
-}
-
 inputs = {
   store_tables = dependency.store.outputs.table_names
   # Only us-east-1 has the bookings stream, so only it runs the events function.
-  store_stream_arn   = local.region == "us-east-1" ? dependency.store.outputs.stream_arn : null
-  stream_name        = dependency.stream.outputs.stream_name
-  stream_arn         = dependency.stream.outputs.stream_arn
-  state_machine_arn  = dependency.saga.outputs.state_machine_arn
-  guest_vault_arns   = [dependency.vault_us.outputs.table_arn, dependency.vault_eu.outputs.table_arn]
-  knowledge_base_id  = dependency.search.outputs.knowledge_base_id
-  knowledge_base_arn = dependency.search.outputs.knowledge_base_arn
+  store_stream_arn  = local.region == "us-east-1" ? dependency.store.outputs.stream_arn : null
+  stream_name       = dependency.stream.outputs.stream_name
+  stream_arn        = dependency.stream.outputs.stream_arn
+  state_machine_arn = dependency.saga.outputs.state_machine_arn
+  guest_vault_arns  = [dependency.vault_us.outputs.table_arn, dependency.vault_eu.outputs.table_arn]
 }

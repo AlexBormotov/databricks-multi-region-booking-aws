@@ -23,7 +23,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlencode
 
 import boto3
 
@@ -38,7 +37,6 @@ ATTEMPTS = 1000
 K6_REGIONS = ("us-east-1", "us-east-2", "us-west-2")
 # The contested room-night lies after every stay the live traffic books.
 CONTESTED = (date(2027, 3, 1), date(2027, 3, 2))
-SEARCH_STAY = (date(2027, 2, 20), date(2027, 2, 22))
 # What the lakehouse step records from gold; tests/lakehouse runs the same queries on a fixture.
 GOLD_QUERIES = {
     "by_region": "SELECT home_region, status, count(*) AS bookings FROM booking.gold.fact_booking "
@@ -94,17 +92,6 @@ def call(method: str, url: str, body: dict | None = None, headers: dict | None =
             return response.status, json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as err:
         return err.code, json.loads(err.read() or b"{}")
-
-
-def free_rooms(api: str, hotel_id: str, stay: tuple[date, date]) -> list[str] | None:
-    query = urlencode({"hotel_id": hotel_id, "check_in": stay[0], "check_out": stay[1]})
-    status, body = call("GET", f"{api}/availability?{query}")
-    return body.get("room_ids") if status == 200 else None
-
-
-def unavailable(api: str, hotel_ids: list[str], stay: tuple[date, date]) -> list[str]:
-    """The hotels with no free room for the stay, asked independently of /search."""
-    return [h for h in hotel_ids if not free_rooms(api, h, stay)]
 
 
 # --- steps ---------------------------------------------------------------------------------
@@ -180,17 +167,6 @@ def traffic(ctx, bookings: int = 200) -> dict:
     }
 
 
-def fill(api: str, rooms: list[dict], stay: tuple[date, date]) -> list[int]:
-    """Books every given room for the stay; returns the statuses."""
-    return [
-        call("POST", f"{api}/bookings", {
-            "hotel_id": r["hotel_id"], "room_id": r["room_id"], "guest_id": str(uuid.uuid4()),
-            "check_in": str(stay[0]), "check_out": str(stay[1]),
-        }, {"idempotency-key": str(uuid.uuid4())})[0]
-        for r in rooms
-    ]  # fmt: skip
-
-
 def live_regions(keys: list[str]) -> set[str]:
     """The regions with live events in the landing bucket; backfill files do not count."""
     return {
@@ -198,52 +174,6 @@ def live_regions(keys: list[str]) -> set[str]:
         for key in keys
         if key.startswith("events/region=") and "/dt=" in key
     }
-
-
-def search_ids(api: str, q: str, stay: tuple[date, date]) -> tuple[int, list[str]]:
-    query = urlencode({"q": q, "check_in": stay[0], "check_out": stay[1]})
-    status, body = call("GET", f"{api}/search?{query}")
-    return status, [h["hotel_id"] for h in body.get("hotels", [])]
-
-
-def search(ctx) -> dict:
-    """Every hotel /search returns has a free room, and a hotel booked out for the stay is left
-    out even when the query names it, while the same query on other dates returns it."""
-    stay, other_stay = (
-        SEARCH_STAY,
-        (SEARCH_STAY[0] + timedelta(days=3), SEARCH_STAY[1] + timedelta(days=3)),
-    )
-    hotel = ctx["hotels"][0]
-    filled = fill(
-        ctx["apis"][0], [r for r in ctx["rooms"] if r["hotel_id"] == hotel["hotel_id"]], stay
-    )
-    named = f"{hotel['name']}, a hotel in {hotel['city']}"
-    found, failures = {}, []
-    if set(filled) != {201}:
-        failures.append(f"could not book out {hotel['name']}: {filled}")
-    for api in ctx["apis"]:
-        results = {
-            "generic": search_ids(api, "quiet hotel with a pool near the park", stay),
-            "named_booked_out": search_ids(api, named, stay),
-            "named_free": search_ids(api, named, other_stay),
-        }
-        found[api] = {k: {"status": st, "hotels": ids} for k, (st, ids) in results.items()}
-        for kind, (status, ids) in results.items():
-            if status != 200:
-                failures.append(f"{api}/search ({kind}) answered {status}")
-            when = other_stay if kind == "named_free" else stay
-            if bad := unavailable(api, ids, when):
-                failures.append(f"{api}/search ({kind}) returned hotels without a free room: {bad}")
-        if hotel["hotel_id"] in results["named_booked_out"][1]:
-            failures.append(f"{api}/search returned {hotel['name']}, which is booked out")
-        if hotel["hotel_id"] not in results["named_free"][1]:
-            failures.append(f"{api}/search did not return {hotel['name']} on free dates")
-    # The availability check itself must go red: an unknown hotel has no free room.
-    control = unavailable(ctx["apis"][0], [str(uuid.uuid4())], stay)
-    if len(control) != 1:
-        failures.append("the availability check did not flag an unknown hotel")
-    return {"stay": [str(d) for d in stay], "booked_out": hotel, "found": found,
-            "control_flagged": control, "failures": failures}  # fmt: skip
 
 
 def k6(ctx) -> dict:
@@ -430,7 +360,6 @@ def replay(ctx) -> dict:
 STEPS = {
     "backfill": backfill,
     "traffic": traffic,
-    "search": search,
     "k6": k6,
     "invariant": invariant,
     "mrsc": mrsc,
@@ -442,7 +371,6 @@ def context(seed: int, scale: str) -> dict:
     return {
         "seed": seed,
         "scale": scale,
-        "hotels": ref["hotels"],
         "rooms": sorted(ref["rooms"], key=lambda r: r["room_id"]),
         "apis": [outputs(f"{r}/api")["api_url"].rstrip("/") for r in ("us-east-1", "us-east-2")],
         "landing": outputs("us-east-1/landing")["bucket"],
@@ -476,7 +404,6 @@ def main(argv=None) -> None:
     demo = commands.add_parser("run")
     demo.add_argument("--seed", type=int, required=True)
     demo.add_argument("--scale", required=True)
-    demo.add_argument("--no-search", dest="search", action="store_false")
     check = commands.add_parser("check-k6")
     check.add_argument("--attempts", type=int, required=True)
     check.add_argument("summaries", nargs="+", type=Path)
@@ -486,8 +413,6 @@ def main(argv=None) -> None:
         ctx = context(args.seed, args.scale)
         lake = {"lakehouse": lakehouse, "replay": replay} if ctx["warehouse_id"] else {}
         steps = STEPS | lake
-        if not args.search:
-            del steps["search"]
         summary = run(ctx, steps)
         sys.exit(0 if all(s["passed"] for s in summary.values()) else 1)
     if args.command == "check-k6":

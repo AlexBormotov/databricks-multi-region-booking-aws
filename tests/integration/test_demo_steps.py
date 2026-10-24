@@ -2,7 +2,6 @@
 
 import json
 import threading
-import uuid
 
 import pytest
 
@@ -38,12 +37,6 @@ def test_traffic_books_replays_and_cancels(ctx):
     assert result["cancel_statuses"] and set(result["cancel_statuses"]) == {200}
 
 
-def test_availability_check_flags_only_hotels_without_a_free_room(ctx):
-    api, hotel = ctx["apis"][0], ctx["rooms"][0]["hotel_id"]
-    unknown = str(uuid.uuid4())
-    assert demo.unavailable(api, [hotel, unknown], demo.SEARCH_STAY) == [unknown]
-
-
 def test_a_failing_step_does_not_stop_the_others(ctx):
     def broken(_):
         raise RuntimeError("boom")
@@ -52,12 +45,3 @@ def test_a_failing_step_does_not_stop_the_others(ctx):
     assert summary["first"]["passed"] is False and "boom" in summary["first"]["failures"][0]
     assert summary["second"] == {"passed": True, "failures": []}
     assert json.loads((demo.ARTIFACTS / "demo.json").read_text()) == summary
-
-
-def test_a_booked_out_hotel_is_flagged_for_that_stay_only(ctx):
-    api, hotel_id = ctx["apis"][0], ctx["rooms"][0]["hotel_id"]
-    rooms = [r for r in ctx["rooms"] if r["hotel_id"] == hotel_id]
-    assert set(demo.fill(api, rooms, demo.SEARCH_STAY)) == {201}
-    assert demo.unavailable(api, [hotel_id], demo.SEARCH_STAY) == [hotel_id]
-    later = tuple(d + demo.timedelta(days=3) for d in demo.SEARCH_STAY)
-    assert demo.unavailable(api, [hotel_id], later) == []

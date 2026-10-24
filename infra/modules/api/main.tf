@@ -10,7 +10,6 @@ locals {
     STREAM_NAME       = var.stream_name
     STATE_MACHINE_ARN = var.state_machine_arn
     HOLD_TTL_S        = tostring(var.hold_ttl_s)
-    KNOWLEDGE_BASE_ID = var.knowledge_base_id
   }
   # The local replica of each store table.
   store = {
@@ -29,7 +28,6 @@ locals {
         local.put_events, # rejected-attempt telemetry
         { Effect = "Allow", Action = "dynamodb:PutItem", Resource = var.guest_vault_arns },
         { Effect = "Allow", Action = "states:StartExecution", Resource = var.state_machine_arn },
-        { Effect = "Allow", Action = "bedrock:Retrieve", Resource = var.knowledge_base_arn },
       ]
     }
     }, var.store_stream_arn == null ? {} : {
@@ -42,7 +40,7 @@ locals {
       ]
     }
   })
-  routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel", "GET /search"]
+  routes = ["POST /guests", "GET /availability", "POST /bookings", "POST /bookings/{booking_id}/cancel"]
 }
 
 data "aws_iam_policy_document" "lambda_trust" {

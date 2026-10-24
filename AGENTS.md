@@ -6,7 +6,7 @@ Working agreement for every agent in this repository, vendor-neutral.
 
 Portfolio project for a Senior Data Engineer: hotel booking across AWS regions with zero double
 bookings under concurrent cross-region writes, plus a Databricks lakehouse for occupancy and revenue
-analytics and a semantic hotel search. `TASK.md` is the source brief and wins over any
+analytics. `TASK.md` is the source brief and wins over any
 summary here.
 
 Two halves, joined by a change stream:
@@ -21,8 +21,6 @@ Two halves, joined by a change stream:
   Declarative Pipelines (medallion, AUTO CDC, expectations) -> Unity Catalog -> Databricks SQL
   dashboards. Exactly-once into Delta is `MERGE` on `event_id`. Lakeflow Jobs orchestrate the
   warehouse.
-- **Vector search.** Bedrock Knowledge Base on S3 Vectors over hotel descriptions and reviews,
-  filtered by live availability from the booking store. OpenSearch Serverless is excluded on cost.
 
 The proof is a load test: k6 on EC2 spot in three regions sends 1000 concurrent attempts for one
 room-night; exactly one succeeds, and an invariant check run afterwards confirms it.
