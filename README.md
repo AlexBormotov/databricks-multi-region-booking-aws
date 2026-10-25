@@ -17,7 +17,7 @@ then bronze (`events`, `hotels`, `rooms`, `fx_rates`), silver (`events_dedup`, `
 The whole stack comes up with `make up` and goes away with `make down`. An AWS session costs
 cents. The brief is [`TASK.md`](TASK.md).
 
-### The 3-minute tour (sound on)
+### The 3-minute tour (please turn the sound on)
 
 https://github.com/user-attachments/assets/dbb5a559-456f-4d31-9811-6a8721cd1c02
 
@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/dbb5a559-456f-4d31-9811-6a8721cd1c02
 | Contention proof in the cloud | [run 1](docs/runs/2026-10-22-run-1/) and [run 2](docs/runs/2026-10-24-run-2/k6.json): 1000 attempts, 1 `201`, 999 `409`, 0 errors, no overlapping bookings |
 | Lakehouse in the cloud | [run 2](docs/runs/2026-10-24-run-2/lakehouse.json): every job check passed. [Run 5](docs/runs/2026-10-24-run-5/): the checks, the data-quality table and the replay passed |
 | Exactly once, replayed | [run 5 replay.json](docs/runs/2026-10-24-run-5/replay.json): 9264 duplicate events sent, 0 duplicates in silver, the fingerprints of five silver and gold tables unchanged |
-| Demo video | [the 3-minute tour](#the-3-minute-tour-sound-on); the file is [`docs/video/zero-double-bookings-compressed.mp4`](docs/video/zero-double-bookings-compressed.mp4) |
+| Demo video | [the 3-minute tour](#the-3-minute-tour-please-turn-the-sound-on); the file is [`docs/video/zero-double-bookings-compressed.mp4`](docs/video/zero-double-bookings-compressed.mp4) |
 | Cloud resources | all torn down on 2026-10-25, the persistent ones included (`make destroy-persistent`); the screenshots, run artifacts and the video are the record |
 
 ## Architecture
