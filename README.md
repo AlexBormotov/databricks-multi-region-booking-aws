@@ -17,6 +17,10 @@ then bronze (`events`, `hotels`, `rooms`, `fx_rates`), silver (`events_dedup`, `
 The whole stack comes up with `make up` and goes away with `make down`. An AWS session costs
 cents. The brief is [`TASK.md`](TASK.md).
 
+### The 3-minute tour
+
+https://github.com/user-attachments/assets/dbb5a559-456f-4d31-9811-6a8721cd1c02
+
 | | |
 |---|---|
 | Transactional | API Gateway + Lambda (Python 3.13) in us-east-1 and us-east-2, DynamoDB global tables with multi-region strong consistency (MRSC), a Step Functions saga |
@@ -27,11 +31,12 @@ cents. The brief is [`TASK.md`](TASK.md).
 
 | Part | Evidence |
 |---|---|
-| Booking core, saga, events, PII residency | 50 integration tests on DynamoDB Local, green in CI |
+| Booking core, saga, events, PII residency | 40 integration tests on DynamoDB Local, green in CI |
 | Contention proof in the cloud | [run 1](docs/runs/2026-10-22-run-1/) and [run 2](docs/runs/2026-10-24-run-2/k6.json): 1000 attempts, 1 `201`, 999 `409`, 0 errors, no overlapping bookings |
 | Lakehouse in the cloud | [run 2](docs/runs/2026-10-24-run-2/lakehouse.json): every job check passed. [Run 5](docs/runs/2026-10-24-run-5/): the checks, the data-quality table and the replay passed |
 | Exactly once, replayed | [run 5 replay.json](docs/runs/2026-10-24-run-5/replay.json): 9264 duplicate events sent, 0 duplicates in silver, the fingerprints of five silver and gold tables unchanged |
-| Demo video | in production |
+| Demo video | [the 3-minute tour](#the-3-minute-tour); the file is [`docs/video/zero-double-bookings-compressed.mp4`](docs/video/zero-double-bookings-compressed.mp4) |
+| Cloud resources | all torn down on 2026-10-25, the persistent ones included (`make destroy-persistent`); the screenshots, run artifacts and the video are the record |
 
 ## Architecture
 
@@ -357,7 +362,12 @@ The owner's one-time steps, and how to run with or without Databricks, are in
 | Period | AWS, whole account | Databricks | Report |
 |---|---|---|---|
 | 2026-10-22, run 1 (three attempts that day) | $0.12 | none | [cost.json](docs/runs/2026-10-22-run-1/cost.json) |
-| October to date, as AWS reported it on 2026-10-24 | $0.90 | trial credits; not yet reported | the budget above |
+| 2026-10-24, runs 2-5 (four sessions) | $0.43: S3 requests $0.25, Kinesis $0.07, KMS $0.06, EC2 spot $0.03, API Gateway $0.02, DynamoDB $0.02 | $7.33 at list price for 2026-10-23 to 24, paid from trial credits: SQL warehouse $4.22, pipeline $2.96, predictive optimization $0.11, networking $0.03, storage $0.01 | [cost.json](docs/runs/2026-10-24-cost.json); Databricks from the account usage dashboard |
+
+Per session that is about $0.11 on AWS and $1.83 on Databricks, inside the $3-7 target. S3 is charged
+for requests, not storage: Firehose, Auto Loader, Delta commits and the replay made 43,666
+write-class requests that day, past the free tier. The KMS line is the account's IAM Identity
+Center key, $0.065 a day whether a session runs or not; it is not part of the stack.
 
 The target is $3-7 per session, most of it Databricks serverless.
 

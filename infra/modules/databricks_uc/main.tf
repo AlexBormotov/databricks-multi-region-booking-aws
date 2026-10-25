@@ -104,7 +104,9 @@ resource "databricks_external_location" "lakehouse" {
   name            = "booking-lakehouse"
   url             = "s3://${aws_s3_bucket.lakehouse.bucket}"
   credential_name = databricks_storage_credential.landing.id
-  depends_on      = [time_sleep.iam]
+  # Dropped managed tables stay registered for 7 days; the bucket goes with force_destroy anyway.
+  force_destroy = true
+  depends_on    = [time_sleep.iam]
 }
 
 resource "databricks_catalog" "booking" {
@@ -112,14 +114,16 @@ resource "databricks_catalog" "booking" {
   comment = "Hotel booking lakehouse."
   # Spelled out with the trailing slash the API adds; the location's url gains it only after apply,
   # which the provider reports as an inconsistent plan.
-  storage_root = "s3://${aws_s3_bucket.lakehouse.bucket}/"
-  depends_on   = [databricks_external_location.lakehouse]
+  storage_root  = "s3://${aws_s3_bucket.lakehouse.bucket}/"
+  force_destroy = true # the pipeline's tables are not in Terraform state
+  depends_on    = [databricks_external_location.lakehouse]
 }
 
 resource "databricks_schema" "layer" {
-  for_each     = toset(["bronze", "silver", "gold"])
-  catalog_name = databricks_catalog.booking.name
-  name         = each.key
+  for_each      = toset(["bronze", "silver", "gold"])
+  catalog_name  = databricks_catalog.booking.name
+  name          = each.key
+  force_destroy = true
 }
 
 resource "databricks_sql_endpoint" "demo" {
